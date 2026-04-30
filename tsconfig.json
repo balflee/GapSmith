@@ -1,0 +1,51 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "src/components/ui/client-tweet-card.tsx",
+    "src/components/ui/code-comparison.tsx",
+    "src/components/ui/file-tree.tsx",
+    "src/components/ui/globe.tsx",
+    "src/components/ui/icon-cloud.tsx",
+    "src/components/ui/rainbow-button.tsx",
+    "vitest.config.ts",
+    "playwright.config.ts",
+    "tests/**/*",
+    "e2e/**/*"
+  ]
+}

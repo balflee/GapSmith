@@ -1,0 +1,11 @@
+# GapSmith
+
+> AI agents scan trends, brainstorm ideas, then debate and stress-test them — so you don't waste months on bad bets. Bring your own API key.
+
+## Features
+
+- Scout scans RSS feeds and pain sources, scores articles, and generates a Gap report with market gaps, pain clusters, and trends
+- Forge runs a 5-round AI brainstorm with Proposer and Defender roles, producing Top 3 ranked ideas with Kill/RICE scores
+- Prove runs a multi-agent debate with 6 specialized AI agents that argue, vote, and produce a verification report with consensus, MVP plan, and ROI analysis
+- Users bring their own LLM API key (Claude, GPT, Gemini, DeepSeek) — one-time purchase, no subscriptions
+- Dynamic pricing — price increases with each purchase, rewarding early buyers

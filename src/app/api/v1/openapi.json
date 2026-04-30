@@ -1,0 +1,359 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "GapSmith Agent API",
+    "version": "1.0.0",
+    "description": "AI agent–accessible API for GapSmith venture intelligence. Authentication is via the x402 payment protocol — every request requires a Solana USDC payment proof in the X-PAYMENT header. Calls without payment receive HTTP 402 with payment requirements.\n\n## Two tiers\n\n- **Data API** (sub-dollar, synchronous): cached intelligence from past Scout runs. Returns results in <1s.\n- **Compute API** (few dollars, asynchronous): runs full pipelines on-demand. Returns 202 + jobId; agent polls for result.\n\n## x402 flow\n\n1. Agent makes request without `X-PAYMENT`.\n2. Server returns 402 with payment requirements (recipient ATA, amount, mint, network).\n3. Agent constructs SPL transferChecked tx, signs, submits to Solana.\n4. Agent retries the same request with `X-PAYMENT: <base64(JSON)>` header.\n5. Server verifies tx on-chain, processes request, returns 200.\n\nIdempotency: each tx_hash can only be used once. Retrying with the same `X-PAYMENT` returns the cached response (sync) or 409 (async).",
+    "contact": {
+      "name": "GapSmith",
+      "url": "https://gapsmith.draftlabs.org"
+    },
+    "license": {
+      "name": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://gapsmith.draftlabs.org",
+      "description": "Production"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "x402": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-PAYMENT",
+        "description": "Base64-encoded JSON: {x402Version: 1, scheme: 'exact', network: 'solana'|'solana-devnet', payload: {txSignature: '<sig>'}}"
+      }
+    },
+    "schemas": {
+      "PaymentRequirements": {
+        "type": "object",
+        "properties": {
+          "scheme": { "type": "string", "enum": ["exact"] },
+          "network": { "type": "string", "enum": ["solana", "solana-devnet"] },
+          "maxAmountRequired": { "type": "string", "description": "Amount in USDC atomic units (6 decimals)" },
+          "asset": { "type": "string", "description": "USDC mint address" },
+          "payTo": { "type": "string", "description": "Merchant's USDC Associated Token Account" },
+          "resource": { "type": "string", "format": "uri" },
+          "description": { "type": "string" },
+          "mimeType": { "type": "string" },
+          "maxTimeoutSeconds": { "type": "integer" }
+        }
+      },
+      "Error402": {
+        "type": "object",
+        "properties": {
+          "x402Version": { "type": "integer", "example": 1 },
+          "accepts": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/PaymentRequirements" }
+          },
+          "error": { "type": "string" }
+        }
+      },
+      "GapItem": {
+        "type": "object",
+        "description": "A synthesized venture opportunity from the Scout multi-agent pipeline. Includes the trend signal that surfaced the gap and the underlying pain signals.",
+        "properties": {
+          "title": { "type": "string", "example": "AI Agent Certification Layer for Enterprise Deployment" },
+          "trend_signal": {
+            "type": "object",
+            "properties": {
+              "article": { "type": "string" },
+              "source": { "type": "string" },
+              "score": { "type": "number" },
+              "insight": { "type": "string" }
+            }
+          },
+          "pain_signals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "theme": { "type": "string" },
+                "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+                "signal_count": { "type": "integer" },
+                "description": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "DailyBrief": {
+        "type": "object",
+        "description": "Daily executive synthesis from the Scout pipeline.",
+        "properties": {
+          "date": { "type": "string", "format": "date" },
+          "overview": { "type": "string" },
+          "takeaway": { "type": "string" },
+          "stats": { "type": "object" },
+          "top_articles": { "type": "array" },
+          "sector_heatmap": { "type": "object" },
+          "narratives": { "type": "array" },
+          "cross_signals": { "type": "array" }
+        }
+      },
+      "PainCluster": {
+        "type": "object",
+        "properties": {
+          "theme": { "type": "string" },
+          "description": { "type": "string" },
+          "mentions": { "type": "integer" },
+          "intensity": { "type": "string" }
+        }
+      },
+      "TrendItem": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "velocity": { "type": "string" },
+          "source": { "type": "string" }
+        }
+      },
+      "KeywordItem": {
+        "type": "object",
+        "properties": {
+          "keyword": { "type": "string" },
+          "count": { "type": "integer" }
+        }
+      },
+      "AgentJob": {
+        "type": "object",
+        "properties": {
+          "jobId": { "type": "string", "example": "fg_abc123" },
+          "endpoint": { "type": "string" },
+          "status": { "type": "string", "enum": ["pending", "running", "completed", "failed"] },
+          "progressPct": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "result": { "type": "object", "nullable": true },
+          "error": { "type": "string", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "completedAt": { "type": "string", "format": "date-time", "nullable": true },
+          "txHash": { "type": "string" }
+        }
+      }
+    }
+  },
+  "security": [{ "x402": [] }],
+  "paths": {
+    "/api/v1/scout/gaps": {
+      "get": {
+        "summary": "Market gap intelligence",
+        "description": "Aggregated market gaps from recent multi-agent scans. Cached — returns instantly.",
+        "tags": ["Data API"],
+        "parameters": [
+          { "name": "sector", "in": "query", "schema": { "type": "string" }, "description": "Filter by sector tag (e.g. 'ai-ml', 'fintech')" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Gaps returned successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "gaps": { "type": "array", "items": { "$ref": "#/components/schemas/GapItem" } },
+                    "count": { "type": "integer" },
+                    "generatedFrom": { "type": "string", "format": "date-time", "nullable": true },
+                    "sector": { "type": "string", "nullable": true }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required (0.10 USDC)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error402" } } }
+          }
+        }
+      }
+    },
+    "/api/v1/scout/pain-clusters": {
+      "get": {
+        "summary": "Pain cluster intelligence",
+        "description": "Recurring themes from real user complaints (Reddit, HN, forums). Cached — returns instantly.",
+        "tags": ["Data API"],
+        "parameters": [
+          { "name": "sector", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pain clusters returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "painClusters": { "type": "array", "items": { "$ref": "#/components/schemas/PainCluster" } },
+                    "count": { "type": "integer" },
+                    "generatedFrom": { "type": "string", "format": "date-time", "nullable": true }
+                  }
+                }
+              }
+            }
+          },
+          "402": { "description": "Payment required (0.10 USDC)" }
+        }
+      }
+    },
+    "/api/v1/scout/trends": {
+      "get": {
+        "summary": "Trend signals",
+        "description": "Emerging market shifts from recent scans. Cached — returns instantly.",
+        "tags": ["Data API"],
+        "parameters": [
+          { "name": "sector", "in": "query", "schema": { "type": "string" } },
+          { "name": "days", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 30, "default": 7 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } }
+        ],
+        "responses": {
+          "200": { "description": "Trends returned" },
+          "402": { "description": "Payment required (0.10 USDC)" }
+        }
+      }
+    },
+    "/api/v1/sectors": {
+      "get": {
+        "summary": "List sectors with cached data (free)",
+        "description": "Discovery endpoint — call this first to find which sector tags actually have cached Scout data, so you don't pay USDC for an empty result. No payment required.",
+        "tags": ["Discovery"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Sector list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sectors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sector": { "type": "string" },
+                          "report_count": { "type": "integer" },
+                          "latest_report": { "type": "string", "format": "date-time" },
+                          "gaps_count": { "type": "integer" }
+                        }
+                      }
+                    },
+                    "total_reports": { "type": "integer" },
+                    "latest_overall": { "type": "string", "format": "date-time", "nullable": true }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scout/brief": {
+      "get": {
+        "summary": "Daily executive brief (richest data)",
+        "description": "Analyst-grade synthesis of the most recent Scout run. Includes overview narrative, takeaway, sector heatmap, narratives, cross-signals.",
+        "tags": ["Data API"],
+        "responses": {
+          "200": {
+            "description": "Brief returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "brief": { "$ref": "#/components/schemas/DailyBrief" },
+                    "generatedFrom": { "type": "string", "format": "date-time" },
+                    "sectors": { "type": "array", "items": { "type": "string" } }
+                  }
+                }
+              }
+            }
+          },
+          "402": { "description": "Payment required (0.20 USDC)" },
+          "404": { "description": "No completed brief available" }
+        }
+      }
+    },
+    "/api/v1/scout/keywords": {
+      "get": {
+        "summary": "Keyword intelligence",
+        "description": "Top keywords by aggregate occurrence across recent scans. Cached — returns instantly.",
+        "tags": ["Data API"],
+        "parameters": [
+          { "name": "sector", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } }
+        ],
+        "responses": {
+          "200": { "description": "Keywords returned" },
+          "402": { "description": "Payment required (0.05 USDC)" }
+        }
+      }
+    },
+    "/api/v1/forge/ideate": {
+      "post": {
+        "summary": "Run a Forge brainstorm session (async)",
+        "description": "Triggers the multi-agent Forge pipeline for the given context. Returns 202 + jobId immediately; pipeline runs in background (~30 min). Poll /api/v1/jobs/{jobId} for progress + result.",
+        "tags": ["Compute API"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sectors": { "type": "array", "items": { "type": "string" } },
+                  "context": { "type": "string", "maxLength": 10000 },
+                  "product_modes": { "type": "array", "items": { "type": "string" } },
+                  "webhook_url": { "type": "string", "format": "uri", "description": "Optional: POST result here when done" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job accepted; poll status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jobId": { "type": "string" },
+                    "status": { "type": "string", "enum": ["pending"] },
+                    "statusUrl": { "type": "string" },
+                    "etaMinutes": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          },
+          "402": { "description": "Payment required (15 USDC)" }
+        }
+      }
+    },
+    "/api/v1/jobs/{jobId}": {
+      "get": {
+        "summary": "Poll an async job's status",
+        "description": "Free endpoint — jobId acts as a capability token. No X-PAYMENT required.",
+        "tags": ["Jobs"],
+        "security": [],
+        "parameters": [
+          { "name": "jobId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job status",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/AgentJob" } }
+            }
+          },
+          "404": { "description": "Job not found" }
+        }
+      }
+    }
+  }
+}
