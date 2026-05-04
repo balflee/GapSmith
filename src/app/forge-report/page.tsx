@@ -13,6 +13,7 @@ import { NumberTicker } from "@/components/ui/number-ticker";
 import { trackForgeComplete } from "@/lib/events";
 import { createClient } from "@/lib/supabase";
 import type { ForgeSession } from "@/lib/types";
+import { parseSessionConfig, summarizeSessionConfig } from "@/lib/session-config";
 
 // --- Types ---
 interface ForgeSessionWithCosts extends ForgeSession {
@@ -1008,6 +1009,17 @@ function ForgeReportContent() {
             <span>{(session.total_input_tokens + session.total_output_tokens).toLocaleString()} tokens</span>
             <span style={{ opacity: 0.3 }}>|</span>
             <span>${session.total_cost_usd.toFixed(4)} API cost</span>
+            {(() => {
+              const summary = summarizeSessionConfig(parseSessionConfig(session.session_config));
+              return summary ? (
+                <>
+                  <span style={{ opacity: 0.3 }}>|</span>
+                  <span title="Project context that shaped these ideas — Prove will inherit this when debating one of them" style={{ color: "oklch(0.55 0.12 178)" }}>
+                    Generated under: {summary}
+                  </span>
+                </>
+              ) : null;
+            })()}
           </div>
         </BlurFade>
       )}

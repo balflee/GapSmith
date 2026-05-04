@@ -115,6 +115,7 @@ export async function POST(request: Request) {
         user_id: user.id,
         scout_report_id: scout_report_id ?? null,
         status: "pending",
+        session_config: session_config || "",
       })
       .select("id")
       .single();

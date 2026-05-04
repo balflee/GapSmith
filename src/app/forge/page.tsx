@@ -23,6 +23,7 @@ import remarkGfm from "remark-gfm";
 import { trackForgeStart } from "@/lib/events";
 import { createClient } from "@/lib/supabase";
 import type { ScoutReport } from "@/lib/types";
+import { parseSessionConfig, summarizeSessionConfig } from "@/lib/session-config";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
 // --- Forge Skeleton (ember-tinted shimmer) ---
@@ -310,7 +311,7 @@ function ForgeContent() {
   const [pastSessions, setPastSessions] = useState<Array<{
     id: string; status: string; created_at: string; model: string | null;
     total_cost_usd: number | null; top_ideas: Array<{ name: string }> | null;
-    label: string;
+    label: string; session_config: string;
   }>>([]);
   const [loadingPastSessions, setLoadingPastSessions] = useState(false);
   const [editingLabel, setEditingLabel] = useState<string | null>(null);
@@ -338,7 +339,7 @@ function ForgeContent() {
       if (!user) { setLoadingPastSessions(false); return; }
       const { data } = await supabase
         .from("forge_sessions")
-        .select("id, status, created_at, model, total_cost_usd, top_ideas, label")
+        .select("id, status, created_at, model, total_cost_usd, top_ideas, label, session_config")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(20);
@@ -1246,6 +1247,17 @@ function ForgeContent() {
                                       <span>{ideas.length} ideas</span>
                                     </>
                                   )}
+                                  {(() => {
+                                    const summary = summarizeSessionConfig(parseSessionConfig(session.session_config));
+                                    return summary ? (
+                                      <>
+                                        <span style={{ opacity: 0.3 }}>|</span>
+                                        <span title="Project context used to generate these ideas" style={{ color: "oklch(0.55 0.12 178)" }}>
+                                          {summary}
+                                        </span>
+                                      </>
+                                    ) : null;
+                                  })()}
                                 </div>
                               </>
                             )}

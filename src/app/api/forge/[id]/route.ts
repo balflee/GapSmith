@@ -24,7 +24,7 @@ export async function GET(
   try {
     const { data, error } = await supabase
       .from("forge_sessions")
-      .select("id, scout_report_id, rounds, top_ideas, status, progress, progress_message, label, created_at")
+      .select("id, scout_report_id, rounds, top_ideas, status, progress, progress_message, label, created_at, session_config")
       .eq("id", id)
       .eq("user_id", user.id)
       .single();

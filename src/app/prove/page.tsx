@@ -22,6 +22,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { trackProveStart } from "@/lib/events";
 import { createClient } from "@/lib/supabase";
+import { parseSessionConfig, summarizeSessionConfig } from "@/lib/session-config";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
 // --- Agent definitions (real engine agents) ---
@@ -211,8 +212,15 @@ function ProveContent() {
   const fromForge = searchParams.get("idea");
   const [ideaSource, setIdeaSource] = useState<string>(fromForge ? "manual" : "forge");
   const [manualIdea, setManualIdea] = useState(fromForge || "");
-  const [forgeIdeas, setForgeIdeas] = useState<Array<{ id: string; name: string; description: string; kill_score: number }>>([]);
+  const [forgeIdeas, setForgeIdeas] = useState<Array<{
+    id: string; name: string; description: string; kill_score: number;
+    forge_session_id: string;
+    forge_session_config: string;  // raw SESSION_CONFIG.md from the parent forge session, "" if none
+  }>>([]);
   const [selectedForgeIdea, setSelectedForgeIdea] = useState<string | null>(null);
+  // When a Forge idea is selected, default to inheriting its SESSION_CONFIG.
+  // User can flip this to true to override with the manual form below.
+  const [overrideForgeContext, setOverrideForgeContext] = useState(false);
   const [loadingForge, setLoadingForge] = useState(true);
   const [selectedModel, setSelectedModel] = useState("gpt-5.4");
   // Project Context (feeds Analyst's lean feasibility math)
@@ -254,19 +262,22 @@ function ProveContent() {
       if (!user) { setLoadingForge(false); return; }
       const { data } = await supabase
         .from("forge_sessions")
-        .select("id, top_ideas")
+        .select("id, top_ideas, session_config")
         .eq("user_id", user.id)
         .eq("status", "complete")
         .order("created_at", { ascending: false })
         .limit(10);
       if (data) {
-        const mapped = data.flatMap((s: { id: string; top_ideas: unknown }) => {
+        const mapped = data.flatMap((s: { id: string; top_ideas: unknown; session_config?: string | null }) => {
           const ideas = (s.top_ideas as Array<{ name?: string; description?: string; kill_score?: number }>) || [];
+          const cfg = s.session_config ?? "";
           return ideas.map((idea, i) => ({
             id: `${s.id}-${i}`,
             name: idea.name || "Untitled Idea",
             description: idea.description || "",
             kill_score: idea.kill_score || 0,
+            forge_session_id: s.id,
+            forge_session_config: cfg,
           }));
         });
         setForgeIdeas(mapped);
@@ -332,8 +343,17 @@ function ProveContent() {
 
   const estimatedCost = (MODEL_COSTS[selectedModel]?.costPerRound ?? 0.20) * (MAX_ROUNDS * 4 + 2); // rounds*agents + voting + strategist
 
-  // Build SESSION_CONFIG.md markdown from form state (only fields that differ from defaults)
+  // The Forge idea (if any) the user picked, with the SESSION_CONFIG it was generated under.
+  const selectedForgeIdeaRecord = ideaSource === "forge" && selectedForgeIdea
+    ? forgeIdeas.find((i) => i.id === selectedForgeIdea)
+    : null;
+  const inheritedConfig = selectedForgeIdeaRecord?.forge_session_config?.trim() || "";
+  const useInheritedContext = !!inheritedConfig && !overrideForgeContext;
+
+  // Build SESSION_CONFIG.md markdown — prefer the inherited Forge config unless
+  // the user explicitly overrode it. Falls back to the manual form otherwise.
   const buildSessionConfig = () => {
+    if (useInheritedContext) return inheritedConfig;
     const hasAny =
       profile !== "Small Team (4-5)" ||
       budget !== "$10K" ||
@@ -625,7 +645,40 @@ function ProveContent() {
             </Card>
           </BlurFade>
 
-          {/* Project Context (optional) */}
+          {/* Inherited-from-Forge context banner — shown when a Forge idea is selected
+              and the user hasn't asked to override. Replaces the manual form. */}
+          {useInheritedContext && (
+            <BlurFade delay={0.14}>
+              <Card className="mb-6" style={{ boxShadow: "0 0 0 1px oklch(0.55 0.12 178 / 25%)", borderRadius: "8px", border: "none", background: "oklch(0.55 0.12 178 / 4%)" }}>
+                <CardContent className="p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: "oklch(0.45 0.12 178)" }}>
+                        Inherited from Forge report
+                      </div>
+                      <div className="text-sm font-medium" style={{ color: "oklch(0.24 0.012 65)" }}>
+                        {summarizeSessionConfig(parseSessionConfig(inheritedConfig)) || "(custom context)"}
+                      </div>
+                      <div className="text-xs mt-1" style={{ color: "oklch(0.48 0.02 65)" }}>
+                        Prove will evaluate this idea against the same constraints Forge used to select it.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setOverrideForgeContext(true)}
+                      className="text-xs font-medium px-3 py-1.5 rounded-md whitespace-nowrap"
+                      style={{ background: "oklch(0.96 0.008 80)", color: "oklch(0.35 0.015 65)", boxShadow: "0 0 0 1px rgba(0,0,0,0.08)" }}
+                    >
+                      Override context
+                    </button>
+                  </div>
+                </CardContent>
+              </Card>
+            </BlurFade>
+          )}
+
+          {/* Project Context (optional) — hidden when inheriting from Forge unless user overrides */}
+          {!useInheritedContext && (
           <BlurFade delay={0.14}>
             <Card className="mb-6" style={{ boxShadow: "0 0 0 1px rgba(0, 0, 0, 0.08)", borderRadius: "8px", border: "none" }}>
               <CardHeader className="pb-3">
@@ -637,10 +690,14 @@ function ProveContent() {
                   <div>
                     <CardTitle className="text-lg" style={{ fontFamily: "var(--font-heading)", letterSpacing: "-0.5px" }}>
                       Your Project Context
-                      <span className="ml-2 text-xs font-normal" style={{ color: "oklch(0.48 0.02 65)" }}>(optional — improves Analyst accuracy)</span>
+                      <span className="ml-2 text-xs font-normal" style={{ color: "oklch(0.48 0.02 65)" }}>
+                        {overrideForgeContext ? "(overriding Forge context)" : "(optional — improves Analyst accuracy)"}
+                      </span>
                     </CardTitle>
                     <div className="text-sm mt-0.5" style={{ color: "oklch(0.45 0.02 65)" }}>
-                      Tell the debate your real budget, team, and background. Without this, agents assume $10K / 4-5 team / $100K target.
+                      {overrideForgeContext
+                        ? "Forge's original context is being overridden. Prove will use what you set below instead."
+                        : "Tell the debate your real budget, team, and background. Without this, agents assume $10K / 4-5 team / $100K target."}
                     </div>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{
@@ -739,6 +796,7 @@ function ProveContent() {
               )}
             </Card>
           </BlurFade>
+          )}
 
           {/* Model & Cost */}
           <BlurFade delay={0.16}>

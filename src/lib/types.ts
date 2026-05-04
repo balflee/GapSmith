@@ -47,6 +47,7 @@ export interface ForgeSessionRow {
   top_ideas: unknown; // jsonb -- array of top 3 idea objects with Kill/RICE scores
   status: string; // "pending" | "running" | "complete" | "error"
   created_at: string;
+  session_config: string; // SESSION_CONFIG.md the user set when starting; "" if defaults
 }
 
 export interface ProveSessionRow {
