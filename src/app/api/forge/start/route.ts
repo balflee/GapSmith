@@ -11,6 +11,7 @@ export const startForgeSchema = z.object({
   context: z.string().max(10000).optional(),
   product_modes: z.array(z.string().max(100)).max(20).optional(),
   model: z.string().max(200).optional(),
+  session_config: z.string().max(5000).optional(),
 });
 
 export type StartForgeResponse = { id: string };
@@ -51,7 +52,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { scout_report_id, context, product_modes, model } = startForgeSchema.parse(body);
+    const { scout_report_id, context, product_modes, model, session_config } = startForgeSchema.parse(body);
 
     // Pick the BYOK row matching the chosen model's provider so users with
     // multiple keys (e.g. Claude + OpenAI) get routed correctly.
@@ -134,6 +135,7 @@ export async function POST(request: Request) {
         api_key: apiKey,
         provider: keyRow.provider,
         model: model || keyRow.model || "gpt-5.4",
+        session_config: session_config || "",
       }),
     }).catch((err) => {
       console.error("Engine dispatch error:", err);

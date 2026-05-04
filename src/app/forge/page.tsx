@@ -317,6 +317,13 @@ function ForgeContent() {
   const [editLabelValue, setEditLabelValue] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // SESSION_CONFIG (Project Context) — improves Analyst / lean-feasibility accuracy
+  const [showContext, setShowContext] = useState(false);
+  const [profile, setProfile] = useState<string>("Small Team (4-5)");
+  const [budget, setBudget] = useState<string>("$10K");
+  const [timeline, setTimeline] = useState<string>("4-8 weeks");
+  const [revenueThreshold, setRevenueThreshold] = useState<string>("$100K/year");
+  const [founderSignal, setFounderSignal] = useState<string>("");
   const roundsEndRef = useRef<HTMLDivElement>(null);
   const logContainerRef = useRef<HTMLDivElement>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
@@ -428,6 +435,30 @@ function ForgeContent() {
   const hasGuidedContent = guidedInputs.market.trim().length > 0 && guidedInputs.painPoints.trim().length > 0;
   const canStart = sourceTab === "scout" ? !!scoutReport : hasGuidedContent;
 
+  // Build SESSION_CONFIG.md markdown from form state (only emit when something differs from defaults)
+  const buildSessionConfig = () => {
+    const hasAny =
+      profile !== "Small Team (4-5)" ||
+      budget !== "$10K" ||
+      timeline !== "4-8 weeks" ||
+      revenueThreshold !== "$100K/year" ||
+      founderSignal.trim() !== "";
+    if (!hasAny) return "";
+    const lines = [
+      "# Session Config",
+      "",
+      "## Project Profile",
+      `Profile: ${profile}`,
+      `Budget: ${budget}`,
+      `Timeline: ${timeline}`,
+      `Revenue_threshold: ${revenueThreshold}`,
+    ];
+    if (founderSignal.trim()) {
+      lines.push("", "## Founder Signal", `Signal: ${founderSignal.trim()}`);
+    }
+    return lines.join("\n");
+  };
+
   const handleStart = async () => {
     console.log("[FORGE] handleStart clicked, canStart=", canStart, "isRunning=", isRunning, "sourceTab=", sourceTab);
     if (!canStart || isRunning) return;
@@ -457,6 +488,7 @@ function ForgeContent() {
           context: sourceTab === "manual" ? buildManualContext() : undefined,
           product_modes: [...selectedModes, ...(customMode.trim() ? [customMode.trim()] : [])],
           model: selectedModel,
+          session_config: buildSessionConfig(),
         }),
       });
 
@@ -906,6 +938,110 @@ function ForgeContent() {
                 </Card>
               </TabsContent>
             </Tabs>
+          </BlurFade>
+
+          {/* SESSION_CONFIG — Project Context (collapsible) */}
+          <BlurFade delay={0.14}>
+            <Card className="mb-6" style={{ boxShadow: "0 0 0 1px rgba(0, 0, 0, 0.08)", borderRadius: "8px", border: "none" }}>
+              <CardHeader className="pb-3">
+                <button
+                  type="button"
+                  onClick={() => setShowContext(v => !v)}
+                  className="flex items-center justify-between w-full text-left"
+                >
+                  <div>
+                    <CardTitle className="text-lg" style={{ fontFamily: "var(--font-heading)", letterSpacing: "-0.5px" }}>
+                      Your Project Context
+                      <span className="ml-2 text-xs font-normal" style={{ color: "oklch(0.48 0.02 65)" }}>(optional — improves Analyst accuracy)</span>
+                    </CardTitle>
+                    <div className="text-sm mt-0.5" style={{ color: "oklch(0.45 0.02 65)" }}>
+                      Tell Forge your real budget, team, and revenue target. Without this, agents assume $10K / 4-5 team / $100K target.
+                    </div>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{
+                    transform: showContext ? "rotate(180deg)" : "rotate(0deg)",
+                    transition: "transform 0.2s", flexShrink: 0, marginLeft: "0.75rem",
+                  }}>
+                    <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              </CardHeader>
+              {showContext && (
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium" style={{ color: "oklch(0.35 0.015 65)" }}>Team Profile</Label>
+                      <Select value={profile} onValueChange={(v) => v && setProfile(v)}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Solo">Solo founder</SelectItem>
+                          <SelectItem value="Small Team (2-3)">Small team (2-3 people)</SelectItem>
+                          <SelectItem value="Small Team (4-5)">Small team (4-5 people)</SelectItem>
+                          <SelectItem value="Funded Team (6-15)">Funded team (6-15)</SelectItem>
+                          <SelectItem value="Enterprise">Enterprise</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium" style={{ color: "oklch(0.35 0.015 65)" }}>MVP Budget</Label>
+                      <Select value={budget} onValueChange={(v) => v && setBudget(v)}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="$1K">$1K (shoestring)</SelectItem>
+                          <SelectItem value="$5K">$5K</SelectItem>
+                          <SelectItem value="$10K">$10K (standard lean)</SelectItem>
+                          <SelectItem value="$25K">$25K</SelectItem>
+                          <SelectItem value="$50K">$50K</SelectItem>
+                          <SelectItem value="$100K+">$100K+ (funded)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium" style={{ color: "oklch(0.35 0.015 65)" }}>Validation Timeline</Label>
+                      <Select value={timeline} onValueChange={(v) => v && setTimeline(v)}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="2 weeks">2 weeks (weekend sprint)</SelectItem>
+                          <SelectItem value="4 weeks">4 weeks</SelectItem>
+                          <SelectItem value="4-8 weeks">4-8 weeks (standard)</SelectItem>
+                          <SelectItem value="8-12 weeks">8-12 weeks</SelectItem>
+                          <SelectItem value="3-6 months">3-6 months</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-sm font-medium" style={{ color: "oklch(0.35 0.015 65)" }}>Year-1 Revenue Target</Label>
+                      <Select value={revenueThreshold} onValueChange={(v) => v && setRevenueThreshold(v)}>
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="$10K/year">$10K/year (side project)</SelectItem>
+                          <SelectItem value="$50K/year">$50K/year</SelectItem>
+                          <SelectItem value="$100K/year">$100K/year (replace job)</SelectItem>
+                          <SelectItem value="$500K/year">$500K/year</SelectItem>
+                          <SelectItem value="$1M+/year">$1M+/year (VC-scale)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium" style={{ color: "oklch(0.35 0.015 65)" }}>
+                      Founder Background / Unfair Advantages (optional)
+                    </Label>
+                    <textarea
+                      value={founderSignal}
+                      onChange={(e) => setFounderSignal(e.target.value)}
+                      placeholder="e.g., 10 years in payments infra. Ex-Stripe. Deep network in YC W24 batch."
+                      rows={3}
+                      className="w-full text-sm rounded-[6px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[oklch(0.84_0.145_85/50%)]"
+                      style={{ background: "oklch(0.96 0.008 80)", color: "oklch(0.24 0.012 65)", boxShadow: "0 0 0 1px rgba(0, 0, 0, 0.06)", lineHeight: "1.55" }}
+                    />
+                    <div className="text-xs" style={{ color: "oklch(0.48 0.02 65)" }}>
+                      Helps Defender / Analyst weigh execution feasibility (distribution, domain depth, network).
+                    </div>
+                  </div>
+                </CardContent>
+              )}
+            </Card>
           </BlurFade>
 
           {/* Model & Cost Estimate */}

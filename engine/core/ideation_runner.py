@@ -214,7 +214,7 @@ Please add the missing items and output the complete content again."""
 # ============================================================
 
 async def _run_gated_round1(
-    context: str, providers: Providers, progress_fn,
+    context: str, providers: Providers, progress_fn, session_config: str = "",
 ) -> tuple[str, float, int, int]:
     """
     Proposer Round 1 split into 4 gated steps (matching CLI):
@@ -314,6 +314,7 @@ Output: Competitive marker + search findings for each pain point.{LANG_SUFFIX}""
 
     # Step 4: Solution design (creative phase, no gate)
     await progress_fn("round1", "Round 1 Step 4/4: Solution design...", 28)
+    sc_block = _build_session_block(session_config)
     step4_prompt = f"""Round 1 / Step 4: Solution Design
 
 Based on the 3-step research:
@@ -328,7 +329,7 @@ Competitive landscape:
 {step3_output[:2000]}
 
 Original context (for product mode constraints):
-{context[:2000]}
+{context[:2000]}{sc_block}
 
 Task:
 - Focus on BLUE_OCEAN and IMPROVABLE pain points (skip RED_OCEAN)
@@ -338,6 +339,8 @@ Task:
 - 10x improvement: How is this 10x better than existing solutions?
 - If product modes are specified in context, solutions MUST match those types
 - For each solution, note the product form (SaaS, API, CLI, etc.)
+- Solutions must be plausibly buildable within SESSION CONFIG's Budget + Timeline
+  (default $10K / 4-8 weeks if SESSION CONFIG is absent).
 
 Reply with your complete pain analysis + solution designs.{LANG_SUFFIX}"""
 
@@ -366,10 +369,47 @@ Reply with your complete pain analysis + solution designs.{LANG_SUFFIX}"""
 
 
 # ============================================================
+# SESSION_CONFIG injection
+# ============================================================
+
+def _build_session_block(session_config: str, label: str = "SESSION CONFIG") -> str:
+    """Format SESSION_CONFIG markdown into a labelled prompt block.
+
+    Returns empty string when session_config is blank, so callers can
+    inline this without conditional plumbing.
+
+    The block is wrapped in `--- ... ---` markers so the LLM can
+    distinguish user constraints from the rest of the prompt; an
+    explicit override note tells it these values supersede any
+    hardcoded defaults later in the prompt.
+    """
+    if not session_config or not session_config.strip():
+        return ""
+    return (
+        f"\n\n--- {label} (overrides defaults like $10K / 4-8 weeks / 4-5 people / $100K/yr) ---\n"
+        f"{session_config.strip()}\n"
+        f"--- END {label} ---\n"
+    )
+
+
+# Default constraints used when SESSION_CONFIG is empty. Centralized
+# here so when the prompt string changes the rest of the codebase
+# continues to use the same fallback wording.
+DEFAULT_LEAN_CONSTRAINTS = (
+    "Defaults (used only if SESSION CONFIG above is empty):\n"
+    "- MVP budget: ~$10K\n"
+    "- Validation timeline: 4-8 weeks\n"
+    "- Team: 4-5 people\n"
+    "- Year-1 revenue threshold: $100K/yr"
+)
+
+
+# ============================================================
 # Prompt builders (Rounds 2-5)
 # ============================================================
 
-def _build_proposer_prompt(round_num: int, context: str, prev_defender: str = "") -> str:
+def _build_proposer_prompt(round_num: int, context: str, prev_defender: str = "", session_config: str = "") -> str:
+    sc_block = _build_session_block(session_config)
     if round_num == 2:
         return f"""Round {round_num} / From Pain to Solution
 
@@ -377,7 +417,7 @@ Defender selected the top 3-5 most valuable pain points:
 {prev_defender}
 
 Original context (for product mode constraints):
-{context[:2000]}
+{context[:2000]}{sc_block}
 
 Task:
 - Design a solution for each high-value pain point
@@ -397,7 +437,7 @@ Defender's previous feedback:
 {prev_defender}
 
 Original context (for constraints):
-{context[:1000]}
+{context[:1000]}{sc_block}
 
 Task:
 - Refine solutions based on Defender feedback
@@ -414,7 +454,7 @@ Reply with your complete analysis.{LANG_SUFFIX}"""
         return f"""Round {round_num} / Final Convergence
 
 Defender's previous feedback:
-{prev_defender}
+{prev_defender}{sc_block}
 
 Task:
 - For each of Defender's Top 3 ideas, add vision description
@@ -426,7 +466,7 @@ Task:
 Reply with your complete analysis.{LANG_SUFFIX}"""
 
 
-def _build_defender_prompt(round_num: int, proposer_output: str, context: str = "") -> str:
+def _build_defender_prompt(round_num: int, proposer_output: str, context: str = "", session_config: str = "") -> str:
     role = """## Creative Coach Mode
 
 You are a creative coach, not a critic.
@@ -495,12 +535,13 @@ Task — focus on SHARPENING each solution:
 Reply with your complete feedback.{LANG_SUFFIX}"""
 
     elif round_num == 3:
+        sc_block = _build_session_block(session_config)
         return f"""{role}
 
 Round {round_num} / Business Model Deep-Dive
 
 Proposer's refined solutions:
-{proposer_output}
+{proposer_output}{sc_block}
 
 Task — focus on BUSINESS MODEL for each idea:
 - "Who is writing the check? The user or their company?"
@@ -508,6 +549,8 @@ Task — focus on BUSINESS MODEL for each idea:
 - "What would a competitor charge for this?" (search for reference points)
 - "Is there expansion revenue? Can you grow within an account?"
 - Guide toward concrete pricing: "If you had to put a price tag on this TODAY, what would it be?"
+- Cross-check pricing math against the user's `Revenue_threshold` from SESSION CONFIG (if provided);
+  default $100K/yr otherwise. The pricing must show a plausible path to that target.
 
 Reply with your complete feedback.{LANG_SUFFIX}"""
 
@@ -548,7 +591,8 @@ Task:
 Reply with your Top 3 selection.{LANG_SUFFIX}"""
 
 
-def _build_strategist_prompt(context: str, brainstorm: str) -> str:
+def _build_strategist_prompt(context: str, brainstorm: str, session_config: str = "") -> str:
+    sc_block = _build_session_block(session_config)
     return f"""Task (Creative Integration Mode):
 
 ## Creative Integration
@@ -569,7 +613,7 @@ You join after Proposer + Defender complete 5 rounds of brainstorming with web s
 
 --- CONTEXT (includes user preferences, product modes, constraints) ---
 {context[:4000]}
---- END CONTEXT ---
+--- END CONTEXT ---{sc_block}
 
 --- BRAINSTORM (5 rounds of research + debate) ---
 {brainstorm[:15000]}
@@ -621,7 +665,12 @@ You MUST respond with a JSON object (no markdown fences, no extra text). The sch
 ### Scoring Guide
 - **kill_score** (1-10): How well does this survive scrutiny? 8+ = strong, 5-7 = decent, <5 = weak
 - **RICE scores** (1-10 each): Reach, Impact, Confidence, Effort. total = (reach * impact * confidence) / effort
-- **lean_feasibility**: LEAN_FIT ($10K, 4-8wk) | STRETCH ($10-25K, 8-12wk) | NOT_LEAN (>$25K, >12wk)
+- **lean_feasibility**: rate against user's Budget + Timeline. If SESSION CONFIG above
+  specifies `Budget` and `Timeline`, use those as the LEAN_FIT bar. Otherwise default
+  to $10K / 4-8 weeks. Bands (proportional to whichever Budget applies):
+  - LEAN_FIT: cost ≤ Budget AND timeline ≤ Timeline
+  - STRETCH: cost ≤ Budget × 2.5 AND timeline ≤ 1.5× Timeline
+  - NOT_LEAN: anything beyond STRETCH
 - **product_form_fit**: NATURAL_FIT (pain point naturally solved by this form) | ADAPTABLE (can work but not ideal) | FORCED (form doesn't match well)
 - **product_form_reason**: 1-2 sentences explaining why this product form fits (or doesn't fit) the pain point
 
@@ -959,7 +1008,10 @@ Your framework:
 2. Pricing logic: Does the proposed pricing make sense relative to competitors and user willingness to pay?
 3. Unit economics: Is LTV > CAC plausible? What's the gross margin structure?
 4. Market size: Is the addressable market large enough to build a real business? (not just TAM — realistic serviceable market)
-5. Path to revenue: How quickly could this idea generate its first dollar? First $10K MRR?
+5. Path to revenue: How quickly could this idea generate its first dollar? Time-to-first
+   scale milestone (e.g. $10K MRR ≈ $120K/yr if Revenue_threshold is $100K+; scale this
+   milestone proportionally if SESSION CONFIG specifies a smaller Revenue_threshold —
+   e.g. Solo $30K/yr → $2.5K MRR milestone)?
 
 You PENALIZE: Vague "SaaS revenue" without specific pricing, ideas where users clearly won't pay, winner-take-all markets with entrenched incumbents.
 You REWARD: Clear pricing tiers with competitor benchmarks, strong gross margins, fast time-to-first-revenue, expansion revenue potential (land-and-expand).
@@ -1059,7 +1111,7 @@ def _calc_rice(d: dict) -> float:
 
 
 async def _run_screening(
-    ideas: list[dict], providers: Providers, progress_fn,
+    ideas: list[dict], providers: Providers, progress_fn, session_config: str = "",
 ) -> tuple[list[dict], float, int, int, dict]:
     """
     CLI-parity screening with 5 parallel agent perspectives:
@@ -1101,18 +1153,20 @@ async def _run_screening(
     if idea_count >= 3:
         await progress_fn("screening", "Kill vote: 5 agents voting...", 88)
 
+        sc_block = _build_session_block(session_config)
         kill_prompt_template = """You are the {agent} agent evaluating startup ideas.
 
 Idea Screening — Kill Vote
 
 Below are 3 Killer Ideas:
 
-{summaries}
+{summaries}{sc}
 
 As the {agent}, pick the 1 WEAKEST idea to eliminate. Consider:
 - Is the pain point real and strong enough?
 - Is the market opportunity large enough?
-- Can a small team (4-5 people, $10K budget) build this?
+- Can the team described in SESSION CONFIG above build this within their Budget + Timeline?
+  (Default to a 4-5 person team / $10K budget / 4-8 weeks if SESSION CONFIG is absent.)
 - Are there obvious fatal flaws?
 
 {perspective}
@@ -1135,6 +1189,7 @@ The name MUST be one of: {names}"""
                 agent=agent, summaries=idea_summaries,
                 perspective=agent_perspectives[agent],
                 names=json.dumps(idea_names),
+                sc=sc_block,
             )
             resp = await providers.llm.call(
                 prompt=prompt, model=model, max_tokens=500, temperature=0.3,
@@ -1352,6 +1407,7 @@ async def run_ideation(
     context: str,
     providers: Providers,
     on_progress: callable = None,
+    session_config: str = "",
 ) -> dict:
     """
     Run 5-round ideation pipeline with full CLI parity.
@@ -1365,6 +1421,9 @@ async def run_ideation(
         context: Scout report or user-provided context.
         providers: LLM + Storage + Search providers.
         on_progress: Optional async callback(step, message, pct).
+        session_config: Optional SESSION_CONFIG.md (Profile/Budget/Timeline/Revenue_threshold).
+                        Overrides hardcoded $10K / 4-8wk / 4-5 people / $100K defaults
+                        when present. See _build_session_block().
 
     Returns:
         dict with rounds, top_ideas, and costs.
@@ -1388,6 +1447,7 @@ async def run_ideation(
 
         r1_output, r1_cost, r1_in, r1_out = await _run_gated_round1(
             context=context, providers=providers, progress_fn=progress,
+            session_config=session_config,
         )
         total_cost += r1_cost
         total_in += r1_in
@@ -1397,7 +1457,7 @@ async def run_ideation(
 
         # Defender Round 1
         await progress("brainstorm", "Round 1/5: Defender filtering pain points...", 32)
-        defender_prompt = _build_defender_prompt(1, r1_output, context)
+        defender_prompt = _build_defender_prompt(1, r1_output, context, session_config)
         defender_response = await providers.llm.call(
             prompt=defender_prompt, model=model, max_tokens=3000,
         )
@@ -1429,7 +1489,7 @@ async def run_ideation(
 
             # Proposer with search (R2 has quality gate for search evidence)
             await progress("brainstorm", f"Round {round_num}/{MAX_ROUNDS}: Proposer researching...", pct_base)
-            proposer_prompt = _build_proposer_prompt(round_num, context, prev_defender)
+            proposer_prompt = _build_proposer_prompt(round_num, context, prev_defender, session_config)
             if round_num == 2:
                 proposer_response = await _call_with_gate(
                     providers, prompt=proposer_prompt, validator=validate_solution_design,
@@ -1448,7 +1508,7 @@ async def run_ideation(
 
             # Defender
             await progress("brainstorm", f"Round {round_num}/{MAX_ROUNDS}: Defender responding...", pct_base + 7)
-            defender_prompt = _build_defender_prompt(round_num, proposer_output, context)
+            defender_prompt = _build_defender_prompt(round_num, proposer_output, context, session_config)
             defender_response = await providers.llm.call(
                 prompt=defender_prompt, model=model, max_tokens=3000,
             )
@@ -1477,7 +1537,7 @@ async def run_ideation(
         # ---- Strategist integration (enforced 3 ideas) ----
         await progress("strategist", "Strategist integrating Top 3 ideas...", 82)
 
-        strategist_prompt = _build_strategist_prompt(context, brainstorm)
+        strategist_prompt = _build_strategist_prompt(context, brainstorm, session_config)
         strategist_response = await providers.llm.call(
             prompt=strategist_prompt, model=model, max_tokens=8192,
             temperature=0.4,
@@ -1515,7 +1575,7 @@ async def run_ideation(
         if len(top_ideas) >= 3:
             await progress("screening", "Screening: Kill vote + RICE scoring...", 88)
             top_ideas, screen_cost, screen_in, screen_out, screening_data = await _run_screening(
-                top_ideas, providers, progress,
+                top_ideas, providers, progress, session_config,
             )
             total_cost += screen_cost
             total_in += screen_in
@@ -1524,7 +1584,7 @@ async def run_ideation(
             # Only 2 ideas (shouldn't happen after fill, but safety net)
             await progress("screening", "RICE scoring 2 ideas...", 88)
             top_ideas, screen_cost, screen_in, screen_out, screening_data = await _run_screening(
-                top_ideas, providers, progress,
+                top_ideas, providers, progress, session_config,
             )
             total_cost += screen_cost
             total_in += screen_in

@@ -316,7 +316,9 @@ Search and estimate MVP costs:
 - "[third-party service] pricing"
 
 Output: categorized cost list + amount per item + source + total (with 10-15% buffer).
-MVP budget cap: ~$10K | Team: 4-5 people | Validation: 4-8 weeks.
+MVP budget cap, team size, and validation window: use `SESSION_CONFIG.Budget`,
+`SESSION_CONFIG.Team`, `SESSION_CONFIG.Timeline` from the Session Config block above
+when present; otherwise default to ~$10K | 4-5 people | 4-8 weeks.
 Return as markdown."""
     step2 = await helpers.call_with_gate(
         providers, step2_prompt,

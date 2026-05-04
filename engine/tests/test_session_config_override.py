@@ -1,15 +1,30 @@
 """
-Synchronous unit tests for SESSION_CONFIG.Revenue_threshold override
-in Prove debate prompts.
+Synchronous unit tests for SESSION_CONFIG override across Prove + Forge prompts.
 
 Regression guard for the bug where Analyst applied the hardcoded
-$100K/year threshold even when SESSION_CONFIG specified a smaller
-revenue target (e.g. Solo profile at $30K/year).
+$100K/year threshold (and $10K / 4-8wk / 4-5 person constraints) even when
+SESSION_CONFIG specified different values (e.g. Solo profile at $30K/year,
+$3K budget). Covers all hardcoded spots in:
+- engine/core/debate_personas.py    (ANALYST_SYSTEM, STRATEGIST_SYSTEM)
+- engine/core/debate_context.py     (Phase A, Phase B Analyst, Strategist Phase 1/2, Contrarian)
+- engine/core/debate_runner.py      (Step 2 cost, Step 3 final analysis)
+- engine/core/ideation_runner.py    (Forge proposer/defender/strategist/screening)
 """
 
 from engine.core import debate_personas as P
-from engine.core.debate_context import build_phase_b_analyst_prompt, build_phase_a_prompt
+from engine.core.debate_context import (
+    build_phase_a_prompt,
+    build_phase_b_analyst_prompt,
+    build_strategist_phase1_prompt,
+    build_strategist_phase2_prompt,
+)
 from engine.core.debate_state import DebateState
+from engine.core.ideation_runner import (
+    _build_session_block,
+    _build_proposer_prompt,
+    _build_defender_prompt,
+    _build_strategist_prompt,
+)
 
 
 SOLO_CONFIG = (
@@ -155,3 +170,119 @@ def test_step3_prompt_no_session_config_keeps_default():
     assert "Session Config:" not in prompt
     assert "SESSION_CONFIG.Revenue_threshold" in prompt
     assert "otherwise default $100K/yr" in prompt
+
+
+# ---------------------------------------------------------------
+# Prove proportional LEAN_FIT scoring (debate_context Phase B Analyst)
+# ---------------------------------------------------------------
+
+def test_phase_b_analyst_lean_fit_is_proportional_to_budget():
+    """LEAN_FIT band must scale with SESSION_CONFIG.Budget, not be hardcoded $10K."""
+    state = _make_state(SOLO_CONFIG)
+    prompt = build_phase_b_analyst_prompt(state)
+    assert "Lean Feasibility Check" in prompt
+    # The new prompt names Budget as the bar, with 2.5× as STRETCH ceiling.
+    assert "Budget" in prompt
+    assert "Budget × 2.5" in prompt or "× 2.5" in prompt
+    # Default fallback line still mentions $10K explicitly so empty config works.
+    assert "default Budget = $10K" in prompt
+    # Old fixed-band line must be gone.
+    assert "🟢 LEAN_FIT ($10K possible) / 🟡 STRETCH ($10-25K) / 🔴 NOT_LEAN (>$25K)" not in prompt
+
+
+# ---------------------------------------------------------------
+# Strategist Phase 1 + 2 prompts
+# ---------------------------------------------------------------
+
+def test_strategist_phase1_injects_session_config():
+    state = _make_state(SOLO_CONFIG)
+    state.discussion = "(stub discussion)"
+    state.consensus_snapshot = ""
+    prompt = build_strategist_phase1_prompt(state)
+    assert "SESSION CONFIG (user's actual constraints" in prompt
+    assert "Revenue_threshold: $30K/year" in prompt
+
+
+def test_strategist_phase1_skips_session_config_when_empty():
+    state = _make_state("")
+    state.discussion = "(stub discussion)"
+    state.consensus_snapshot = ""
+    prompt = build_strategist_phase1_prompt(state)
+    assert "SESSION CONFIG (user's actual constraints" not in prompt
+
+
+def test_strategist_phase2_injects_session_config():
+    state = _make_state(SOLO_CONFIG)
+    prompt = build_strategist_phase2_prompt(state, None, "(phase 1 analysis stub)")
+    assert "SESSION CONFIG (user's actual constraints" in prompt
+    assert "Profile: Solo" in prompt
+    # Budget table line must now reference SESSION_CONFIG override
+    assert "SESSION_CONFIG.Budget" in prompt
+
+
+# ---------------------------------------------------------------
+# Forge (ideation_runner) — _build_session_block helper
+# ---------------------------------------------------------------
+
+def test_session_block_helper_emits_block_with_config():
+    block = _build_session_block(SOLO_CONFIG)
+    assert "--- SESSION CONFIG" in block
+    assert "Revenue_threshold: $30K/year" in block
+    assert "--- END SESSION CONFIG" in block
+    assert "overrides defaults" in block
+
+
+def test_session_block_helper_returns_empty_for_blank_config():
+    assert _build_session_block("") == ""
+    assert _build_session_block("   \n  ") == ""
+
+
+# ---------------------------------------------------------------
+# Forge prompt builders honor SESSION_CONFIG
+# ---------------------------------------------------------------
+
+def test_forge_proposer_round2_injects_session_config():
+    prompt = _build_proposer_prompt(2, "## context here", "(prev defender)", SOLO_CONFIG)
+    assert "--- SESSION CONFIG" in prompt
+    assert "Revenue_threshold: $30K/year" in prompt
+
+
+def test_forge_proposer_round3_injects_session_config():
+    prompt = _build_proposer_prompt(3, "## context here", "(prev defender)", SOLO_CONFIG)
+    assert "Revenue_threshold: $30K/year" in prompt
+
+
+def test_forge_proposer_round5_injects_session_config():
+    prompt = _build_proposer_prompt(5, "ctx", "prev defender", SOLO_CONFIG)
+    assert "Revenue_threshold: $30K/year" in prompt
+
+
+def test_forge_proposer_no_session_config_leaves_prompt_clean():
+    """Without session_config, no SESSION CONFIG block should appear."""
+    prompt = _build_proposer_prompt(2, "## context here", "(prev defender)", "")
+    assert "--- SESSION CONFIG" not in prompt
+
+
+def test_forge_defender_round3_business_model_references_revenue_threshold():
+    """Round 3 (Business Model Deep-Dive) must cross-check pricing vs SESSION_CONFIG.Revenue_threshold."""
+    prompt = _build_defender_prompt(3, "(proposer output)", "ctx", SOLO_CONFIG)
+    assert "Revenue_threshold: $30K/year" in prompt
+    assert "Revenue_threshold" in prompt  # mentioned in instructions
+
+
+def test_forge_strategist_injects_session_config_and_proportional_lean_fit():
+    prompt = _build_strategist_prompt("ctx", "(brainstorm)", SOLO_CONFIG)
+    assert "Revenue_threshold: $30K/year" in prompt
+    # Proportional LEAN_FIT bands must be present
+    assert "LEAN_FIT" in prompt
+    assert "Budget" in prompt
+    # Old fixed-band wording must be gone
+    assert "LEAN_FIT ($10K, 4-8wk) | STRETCH ($10-25K, 8-12wk) | NOT_LEAN (>$25K, >12wk)" not in prompt
+
+
+def test_forge_strategist_no_session_config_keeps_default():
+    prompt = _build_strategist_prompt("ctx", "(brainstorm)", "")
+    assert "--- SESSION CONFIG" not in prompt
+    # Default fallback ($10K / 4-8 weeks) must still be mentioned in lean_feasibility guidance
+    assert "default" in prompt.lower()
+    assert "$10K" in prompt

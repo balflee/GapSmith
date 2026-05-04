@@ -57,7 +57,8 @@ class RunForgeRequest(BaseModel):
     api_key: str
     provider: str
     model: str
-    agent_job_id: str | None = None   # Set when called via /api/v1/forge/ideate (agent x402)
+    session_config: str = ""           # Optional SESSION_CONFIG.md (Profile/Budget/Timeline/Revenue_threshold)
+    agent_job_id: str | None = None    # Set when called via /api/v1/forge/ideate (agent x402)
 
 
 class RunProveRequest(BaseModel):
@@ -194,6 +195,7 @@ async def _run_forge_bg(req: RunForgeRequest):
             context=req.context,
             providers=providers,
             on_progress=on_progress,
+            session_config=req.session_config,
         )
 
         # Mirror final result to agent_jobs + fire webhook if x402-paid run.

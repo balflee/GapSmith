@@ -44,7 +44,7 @@ Your proposal must cover:
 4. **Business Model**: Pricing strategy. Benchmark against real competitor prices.
 5. **Why Now**: What changed that makes this viable/necessary now.
 6. **Competitive Landscape**: Who else is doing this (search Product Hunt / G2 / Capterra). Differentiation.
-7. **MVP Scope**: Minimum viable version. Budget ~$10K, timeline 4-8 weeks.
+7. **MVP Scope**: Minimum viable version. Use `SESSION_CONFIG.Budget` and `SESSION_CONFIG.Timeline` when present in the SESSION CONFIG block above; otherwise default to ~$10K budget / 4-8 weeks.
 
 Use specific data and examples. **Cite at least 3 sources inline** using `[REF: SEARCH] URL`
 format (the Trend Scout section below will give you real URLs — use them). Unsourced market
@@ -219,7 +219,11 @@ Constraints (defaults — `SESSION_CONFIG` below overrides any value it specifie
 - Year-1 revenue threshold: use `SESSION_CONFIG.Revenue_threshold` if provided (e.g. Solo $30K/yr, Founder Couple $50K/yr, Small Team $50-80K/yr); else default $100K/yr. Below threshold = LOW_ROI.
 
 Analysis steps:
-1. **Lean Feasibility Check** → 🟢 LEAN_FIT ($10K possible) / 🟡 STRETCH ($10-25K) / 🔴 NOT_LEAN (>$25K)
+1. **Lean Feasibility Check** — score proportionally against the user's stated Budget:
+   - 🟢 LEAN_FIT: estimated MVP cost ≤ Budget
+   - 🟡 STRETCH: estimated MVP cost ≤ Budget × 2.5
+   - 🔴 NOT_LEAN: estimated MVP cost > Budget × 2.5
+   If SESSION CONFIG above is empty, default Budget = $10K (so LEAN_FIT ≤ $10K, STRETCH ≤ $25K, NOT_LEAN > $25K).
 2. **Cost Structure** — categorized list + 10-15% buffer
 3. **Revenue Model** — at least 2 scenarios (pessimistic / base / optimistic) with math
 4. **ROI + Break-Even** → 🟢 HIGH_ROI / 🟡 MED_ROI / 🔴 LOW_ROI
@@ -496,13 +500,21 @@ Return as JSON only:
 
 def build_strategist_phase1_prompt(state: DebateState, config: dict | None = None) -> str:
     """Phase 1: consensus integration + logic check (may detect LOGIC_BLOCKED)."""
+    sc_block = ""
+    if state.session_config:
+        sc_block = f"""
+
+--- SESSION CONFIG (user's actual constraints — overrides defaults) ---
+{state.session_config}
+--- END SESSION CONFIG ---
+"""
     return f"""Strategist Phase 1/2 — Consensus Integration + Logic Check
 
 Session: {state.session_id}
 Status: {state.consensus}
 LOGIC_BLOCKED attempts: {state.logic_blocked_count} (2nd attempt = last chance)
 
-Task: Analyze the full debate. Focus on understanding and finding problems. No planning yet.
+Task: Analyze the full debate. Focus on understanding and finding problems. No planning yet.{sc_block}
 
 --- FULL DISCUSSION ---
 {state.discussion}
@@ -566,12 +578,20 @@ Return as markdown."""
 
 
 def build_strategist_phase2_prompt(state: DebateState, config: dict | None, analysis: str) -> str:
+    sc_block = ""
+    if state.session_config:
+        sc_block = f"""
+
+--- SESSION CONFIG (user's actual constraints — overrides defaults) ---
+{state.session_config}
+--- END SESSION CONFIG ---
+"""
     return f"""Strategist Phase 2/2 — Execution Roadmap + Summary
 
 Session: {state.session_id}
 Status: {state.consensus}
 
-Task: Based on Phase 1 analysis, design the execution plan.
+Task: Based on Phase 1 analysis, design the execution plan.{sc_block}
 
 --- PHASE 1 ANALYSIS ---
 {analysis}
@@ -596,7 +616,7 @@ End-of-Phase Decision:
 
 ### Resource Plan
 - **Team**: | Role | Responsibility | % Time | When |
-- **Budget**: | Phase | Budget | Main Costs | (total ≤ $10K)
+- **Budget**: | Phase | Budget | Main Costs | (total ≤ `SESSION_CONFIG.Budget` if provided, else ≤ $10K default)
 - **External Dependencies**: | Dependency | Criticality | Backup |
 
 ### Risk Matrix
@@ -822,7 +842,7 @@ Output for each alternative:
 **Why it might be better**: 1-2 reasons
 **Real case / evidence**: search result supporting this direction
 **Risk**: biggest risk
-**With only $10K and 4 weeks**: minimum validation approach
+**Within SESSION_CONFIG.Budget and SESSION_CONFIG.Timeline** (default $10K and 4 weeks): minimum validation approach
 """
 
 
