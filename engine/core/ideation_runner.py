@@ -1393,6 +1393,14 @@ RESPOND WITH ONLY THIS JSON, NOTHING ELSE:
             winner_key = "idea_a" if remaining_ideas[0]["name"] in pick_resp.content else "idea_b"
             print(f"[SCREEN] Strategist tiebreak: {pick_resp.content.strip()}", flush=True)
 
+    # Capture pre-reorder identities so screening_details can pair the
+    # idea_a/idea_b labels with their *own* per-agent rice_total values.
+    # The previous code was reading remaining_ideas[0/1].name AFTER the
+    # reorder, which produced "winner-name with loser-score" mismatches in
+    # the rice table whenever idea_b won.
+    pre_reorder_a_name = remaining_ideas[0]["name"] if remaining_ideas else ""
+    pre_reorder_b_name = remaining_ideas[1]["name"] if len(remaining_ideas) > 1 else ""
+
     # Update RICE scores from aggregate
     for key, idx in [("idea_a", 0), ("idea_b", 1)]:
         if idx < len(remaining_ideas) and agent_scores:
@@ -1409,6 +1417,28 @@ RESPOND WITH ONLY THIS JSON, NOTHING ELSE:
                 for dim in avg:
                     avg[dim] = round(avg[dim] / count)
                 remaining_ideas[idx]["rice_score"] = _validate_rice(avg)
+
+    # Safety override: even if the cascade tiebreaker landed on a winner_key,
+    # honor the simple summed-total comparison whenever it disagrees by a
+    # non-trivial margin. The cascade has historically dropped the higher-RICE
+    # idea in cases like:
+    #   ShipGuard total 266 vs AgentMeter total 323 → AgentMeter should win,
+    #   but ShipGuard ended up rank-1, contradicting the WINNER badge the
+    #   frontend computes from rice_total_a vs rice_total_b.
+    # Forcing alignment here keeps backend rank-1 and frontend WINNER badge
+    # consistent under all conditions.
+    final_a = _total_score("idea_a")
+    final_b = _total_score("idea_b")
+    if agent_scores and abs(final_a - final_b) > 0.5:
+        expected_winner = "idea_a" if final_a > final_b else "idea_b"
+        if winner_key != expected_winner:
+            print(
+                f"[SCREEN] simple-max override: cascade said {winner_key} but "
+                f"summed totals say {expected_winner} (A={final_a:.1f} vs B={final_b:.1f}).",
+                flush=True,
+            )
+            winner_key = expected_winner
+            tiebreaker_level = (tiebreaker_level + " (overridden by simple-max)") if tiebreaker_level else "simple-max"
 
     # Reorder by winner
     if winner_key == "idea_b":
@@ -1428,10 +1458,15 @@ RESPOND WITH ONLY THIS JSON, NOTHING ELSE:
         "kill_result": killed_name_result,
         "kill_vote_counts": kill_vote_counts,
         "rice_scores": rice_score_details,
-        "rice_idea_a": remaining_ideas[0]["name"] if remaining_ideas else "",
-        "rice_idea_b": remaining_ideas[1]["name"] if len(remaining_ideas) > 1 else "",
-        "rice_total_a": round(_total_score("idea_a")) if agent_scores else 0,
-        "rice_total_b": round(_total_score("idea_b")) if agent_scores else 0,
+        # Always pair label↔total by ORIGINAL idea_a / idea_b assignment so the
+        # rice-table row "ShipGuard 266 | AgentMeter 323" stays internally
+        # consistent regardless of post-reorder ranking. The frontend computes
+        # the WINNER badge from `rice_total_a >= rice_total_b`, which still
+        # works correctly under this pairing.
+        "rice_idea_a": pre_reorder_a_name,
+        "rice_idea_b": pre_reorder_b_name,
+        "rice_total_a": round(final_a) if agent_scores else 0,
+        "rice_total_b": round(final_b) if agent_scores else 0,
         "tiebreaker_level": tiebreaker_level,
         "winner": final_ideas[0]["name"] if final_ideas else "",
     }

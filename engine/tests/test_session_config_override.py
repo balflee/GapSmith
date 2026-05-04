@@ -400,3 +400,141 @@ def test_dedup_preserves_meaningful_number_differences():
     #                            "validate willingness to pay within 8 weeks of"
     # The "3" vs "8" differs at word 6, so both are kept.
     assert len(out) == 2
+
+
+# ---------------------------------------------------------------
+# Forge screening winner / rank invariants — regression for
+# 4 prior production cases where the higher-RICE idea was demoted
+# behind the Strategist's original rank-1 idea (e.g. session
+# 0e13c9bd: AgentMeter total 322 vs ShipGuard 266, but ShipGuard
+# stayed as rank-1 and `winner` field).
+#
+# We can't run the full async pipeline in unit tests, but we CAN
+# replay the deterministic post-RICE decision block on a fixture
+# of agent_scores to verify the invariants hold.
+# ---------------------------------------------------------------
+
+def _replay_screening_decision(
+    remaining_ideas: list[dict],
+    agent_scores: dict[str, dict],
+    cascade_winner_key: str,
+):
+    """Mirrors the decision block in _run_screening() so the invariants
+    can be tested without spinning up async LLM calls.
+
+    Returns (final_ideas, screening_details).
+    """
+    # _total_score (mirrors the inner function in _run_screening)
+    def total_score(key):
+        return sum(s.get(key, {}).get("total", 0) for s in agent_scores.values())
+
+    pre_a = remaining_ideas[0]["name"] if remaining_ideas else ""
+    pre_b = remaining_ideas[1]["name"] if len(remaining_ideas) > 1 else ""
+
+    final_a = total_score("idea_a")
+    final_b = total_score("idea_b")
+    winner_key = cascade_winner_key
+    if agent_scores and abs(final_a - final_b) > 0.5:
+        expected = "idea_a" if final_a > final_b else "idea_b"
+        if winner_key != expected:
+            winner_key = expected
+
+    if winner_key == "idea_b":
+        remaining_ideas = [remaining_ideas[1], remaining_ideas[0]]
+
+    final_ideas = []
+    for i, idea in enumerate(remaining_ideas[:2]):
+        idea["rank"] = i + 1
+        final_ideas.append(idea)
+
+    screening_details = {
+        "rice_idea_a": pre_a,
+        "rice_idea_b": pre_b,
+        "rice_total_a": round(final_a) if agent_scores else 0,
+        "rice_total_b": round(final_b) if agent_scores else 0,
+        "winner": final_ideas[0]["name"] if final_ideas else "",
+    }
+    return final_ideas, screening_details
+
+
+# Real-world fixture from session 0e13c9bd-c39b-44d4-b97f-06549baa6245
+SESSION_0E13_AGENT_SCORES = {
+    "proposer":   {"idea_a": {"total": 42},  "idea_b": {"total": 130}},
+    "challenger": {"idea_a": {"total": 24},  "idea_b": {"total": 42}},
+    "analyst":    {"idea_a": {"total": 78},  "idea_b": {"total": 35}},
+    "defender":   {"idea_a": {"total": 102}, "idea_b": {"total": 74}},
+    "reviewer":   {"idea_a": {"total": 20},  "idea_b": {"total": 42}},
+}
+
+
+def test_screening_higher_summed_idea_b_wins_even_if_cascade_returned_idea_a():
+    """The historical bug: cascade somehow returned 'idea_a' (ShipGuard) but
+    summed totals clearly favored 'idea_b' (AgentMeter, 323 vs 266). The
+    safety override must flip the winner."""
+    ideas = [{"name": "ShipGuard"}, {"name": "AgentMeter"}]
+    final_ideas, det = _replay_screening_decision(
+        ideas, SESSION_0E13_AGENT_SCORES, cascade_winner_key="idea_a"
+    )
+    assert det["winner"] == "AgentMeter"
+    assert final_ideas[0]["name"] == "AgentMeter"
+    assert final_ideas[0]["rank"] == 1
+    assert final_ideas[1]["name"] == "ShipGuard"
+    assert final_ideas[1]["rank"] == 2
+
+
+def test_screening_label_total_pairing_after_reorder():
+    """After reorder, rice_idea_a / rice_total_a must still refer to the
+    SAME idea (the one labelled 'idea_a' in the LLM prompt), not get
+    swapped with the winner. Frontend's `aWins = total_a >= total_b`
+    should still work."""
+    ideas = [{"name": "ShipGuard"}, {"name": "AgentMeter"}]
+    _, det = _replay_screening_decision(
+        ideas, SESSION_0E13_AGENT_SCORES, cascade_winner_key="idea_a"
+    )
+    # The LLM saw ShipGuard as idea_a and scored it. Label and total must agree:
+    assert det["rice_idea_a"] == "ShipGuard"
+    assert det["rice_total_a"] == 266
+    assert det["rice_idea_b"] == "AgentMeter"
+    assert det["rice_total_b"] == 323
+    # Frontend WINNER badge (a >= b) still resolves to the right side:
+    a_wins = det["rice_total_a"] >= det["rice_total_b"]
+    assert a_wins is False  # AgentMeter (rice_idea_b) should win badge
+    assert det["winner"] == "AgentMeter"
+
+
+def test_screening_no_override_when_cascade_agrees_with_summed():
+    """When cascade already picks the higher-summed idea, no override fires."""
+    ideas = [{"name": "ShipGuard"}, {"name": "AgentMeter"}]
+    _, det = _replay_screening_decision(
+        ideas, SESSION_0E13_AGENT_SCORES, cascade_winner_key="idea_b"
+    )
+    assert det["winner"] == "AgentMeter"
+
+
+def test_screening_no_override_on_near_tie():
+    """A 0.5 difference is treated as a tie — cascade winner is respected
+    (avoids flipping on float-rounding noise)."""
+    near_tie = {
+        "proposer":   {"idea_a": {"total": 50}, "idea_b": {"total": 50}},
+        "challenger": {"idea_a": {"total": 50}, "idea_b": {"total": 50.4}},
+    }
+    ideas = [{"name": "A"}, {"name": "B"}]
+    _, det = _replay_screening_decision(ideas, near_tie, cascade_winner_key="idea_a")
+    # Cascade said A wins; near-tie respects the cascade.
+    assert det["winner"] == "A"
+
+
+def test_screening_handles_idea_a_clearly_higher():
+    """A=400, B=200 → A wins regardless of cascade."""
+    scores = {
+        "proposer":   {"idea_a": {"total": 100}, "idea_b": {"total": 50}},
+        "challenger": {"idea_a": {"total": 100}, "idea_b": {"total": 50}},
+        "analyst":    {"idea_a": {"total": 100}, "idea_b": {"total": 50}},
+        "defender":   {"idea_a": {"total": 100}, "idea_b": {"total": 50}},
+    }
+    ideas = [{"name": "A"}, {"name": "B"}]
+    # Even if cascade somehow said idea_b:
+    _, det = _replay_screening_decision(ideas, scores, cascade_winner_key="idea_b")
+    assert det["winner"] == "A"
+    assert det["rice_total_a"] == 400
+    assert det["rice_total_b"] == 200
