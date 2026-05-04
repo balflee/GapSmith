@@ -344,3 +344,59 @@ def test_forge_defender_r1_r2_r4_r5_do_not_have_fact_rule():
         assert "Hard-Fact Citation Rule" not in prompt, (
             f"R{r} Defender should not carry FACT_CLAIMS — only R3 (Business Model) does"
         )
+
+
+# ---------------------------------------------------------------
+# Vote-condition dedup (debate_runner._dedup_conditions)
+# Catches semantic duplicates that dict.fromkeys() misses.
+# ---------------------------------------------------------------
+
+from engine.core.debate_runner import _dedup_conditions
+
+
+def test_dedup_real_world_case_caught_in_77520303():
+    """Real case from prove_session 77520303-...: two voters produced the
+    same condition with different wording around the dollar figure."""
+    a = "Complete at least 3 manual margin audits proving $1,000+/month in identifiable margin leakage or recoverable profit for target Shopify + Amazon merchants."
+    b = "Complete at least 3 manual margin audits proving identifiable or recoverable leakage of at least $1,000-$5,000/month for target merchants."
+    out = _dedup_conditions([a, b])
+    assert len(out) == 1
+    # First occurrence's full wording wins.
+    assert out[0] == a
+
+
+def test_dedup_keeps_distinct_conditions():
+    items = [
+        "Validate willingness to pay within 4 weeks of demos.",
+        "Land 3 paying merchants in 8 weeks.",
+        "Confirm Shopify partner ecosystem demand signal.",
+    ]
+    assert _dedup_conditions(items) == items
+
+
+def test_dedup_handles_exact_duplicates():
+    out = _dedup_conditions(["Same condition", "Same condition", "Same condition"])
+    assert out == ["Same condition"]
+
+
+def test_dedup_handles_empty_and_non_strings():
+    out = _dedup_conditions(["", "   ", None, "Real one", "Real one"])
+    assert out == ["Real one"]
+
+
+def test_dedup_respects_max_results():
+    items = [f"Distinct prefix {i} unique tail words here" for i in range(20)]
+    out = _dedup_conditions(items, max_results=5)
+    assert len(out) == 5
+
+
+def test_dedup_preserves_meaningful_number_differences():
+    """Numbers are NOT stripped — '3 weeks' and '8 weeks' should stay distinct
+    when the rest of the condition is identical."""
+    a = "Validate willingness to pay within 3 weeks of demos."
+    b = "Validate willingness to pay within 8 weeks of demos."
+    out = _dedup_conditions([a, b])
+    # First 8 normalized words: "validate willingness to pay within 3 weeks of"
+    #                            "validate willingness to pay within 8 weeks of"
+    # The "3" vs "8" differs at word 6, so both are kept.
+    assert len(out) == 2

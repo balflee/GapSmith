@@ -34,6 +34,57 @@ from engine.core import validators as V
 MAX_ROUNDS = 3
 
 
+_DEDUP_PUNCT_RE = re.compile(r"[^\w\s]+")
+_DEDUP_WS_RE = re.compile(r"\s+")
+
+
+def _dedup_conditions(conditions: list[str], max_results: int = 10) -> list[str]:
+    """Deduplicate vote conditions allowing for minor wording drift.
+
+    The naive previous implementation (`dict.fromkeys`) only catches
+    byte-identical strings, so different agents producing semantically the
+    same condition with slight wording differences both showed up in the
+    final report. Real-world example caught in session 77520303-...:
+
+        [1] "Complete at least 3 manual margin audits proving \\$1,000+/month
+             in identifiable margin leakage..."
+        [6] "Complete at least 3 manual margin audits proving identifiable
+             or recoverable leakage of at least \\$1,000-\\$5,000/month..."
+
+    Both entries express the same gating condition; the second is just a
+    rewording. We use a normalized first-N-words signature as the dedup
+    key so this kind of paraphrase collapses, while keeping the first
+    occurrence's full original wording in the output.
+
+    Note: numbers are intentionally NOT stripped — when two conditions
+    differ in scale ("3 weeks" vs "8 weeks") they are usefully distinct.
+    Only word order through word index ``key_word_count`` is compared,
+    so trailing detail can vary without triggering dedup.
+    """
+    key_word_count = 8
+    seen_keys: set[str] = set()
+    out: list[str] = []
+    for cond in conditions:
+        if not isinstance(cond, str):
+            continue
+        text = cond.strip()
+        if not text:
+            continue
+        normalized = _DEDUP_PUNCT_RE.sub(" ", text.lower())
+        normalized = _DEDUP_WS_RE.sub(" ", normalized).strip()
+        words = normalized.split()
+        if not words:
+            continue
+        key = " ".join(words[:key_word_count])
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        out.append(text)
+        if len(out) >= max_results:
+            break
+    return out
+
+
 # ============================================================
 # Phase A — Proposer (+ Trend Scout sub-agent)
 # ============================================================
@@ -1093,6 +1144,16 @@ async def run_debate(
                         vote_counts[vote] += 1
                     all_conditions.extend(last[key].get("conditions", []) or [])
 
+        # Deduplicate conditions across voters. dict.fromkeys() only catches
+        # byte-identical strings; agents often arrive at the same condition
+        # with slight wording drift ("Complete at least 3 manual margin audits
+        # proving $1,000+/month" vs "...proving identifiable leakage of at
+        # least $1,000-$5,000/month" — same condition, different precision).
+        # The dedup key is lowercase, punctuation-stripped, first 8 words —
+        # captures shared opening intent while preserving the first
+        # occurrence's full wording in the output.
+        all_conditions = _dedup_conditions(all_conditions, max_results=10)
+
         # Map internal consensus to external verdict
         verdict_map = {
             "APPROVED": "APPROVED",
@@ -1112,7 +1173,7 @@ async def run_debate(
             "verdict": verdict,
             "vote_summary": {
                 "vote_counts": vote_counts,
-                "conditions": list(dict.fromkeys(all_conditions))[:10],
+                "conditions": all_conditions,
                 "total_voters": sum(vote_counts.values()),
             },
             "model": providers.model,
