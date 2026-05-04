@@ -341,7 +341,7 @@ Task:
 - For each solution, note the product form (SaaS, API, CLI, etc.)
 - Solutions must be plausibly buildable within SESSION CONFIG's Budget + Timeline
   (default $10K / 4-8 weeks if SESSION CONFIG is absent).
-
+{FACT_CLAIMS_RULE}
 Reply with your complete pain analysis + solution designs.{LANG_SUFFIX}"""
 
     r4 = await _call_llm_with_search(providers, prompt=step4_prompt, max_tokens=4096)
@@ -404,6 +404,37 @@ DEFAULT_LEAN_CONSTRAINTS = (
 )
 
 
+# Hard-fact citation rule — injected into rounds where the LLM is most
+# tempted to invent specific competitor names, pricing, funding amounts,
+# contract statuses, or user counts. Without this, models like
+# gpt-4o/Claude/Gemini will confidently hallucinate ("Portkey charges $9
+# per 100k logs") because the prompt asks for concrete pricing.
+#
+# The rule mirrors `.claude/rules/FACT_CLAIMS.md` from the parent
+# Idea-generator project: hard facts MUST cite, soft facts MUST tag,
+# fabrications MUST be deleted.
+FACT_CLAIMS_RULE = """
+### Hard-Fact Citation Rule (CRITICAL — judges will check)
+
+For any HARD FACT — specific competitor names + pricing, funding amounts, contract
+statuses, user counts, market sizes, ARR figures — you MUST do ONE of:
+
+1. **Cite inline** with `[REF: SEARCH] URL` if the fact came from a real search result
+   in the upstream context. Example: `Stripe charges $0.30 per transaction [REF: SEARCH] https://stripe.com/pricing`
+
+2. **Tag as estimate** with `[assumption]` plus a one-line basis if it's a reasoned
+   estimate, not a real number. Example: `Average B2B SaaS ARPU around $150/mo [assumption]
+   — based on industry benchmarks for similar developer tools`
+
+3. **Delete it** if you can't cite or estimate — use generic phrasing instead.
+   Example: write "competitive subscription pricing" rather than "$49/mo (CompetitorX)"
+
+NEVER invent specific dollar amounts, customer counts, or contract states without a
+source URL or `[assumption]` tag. Hallucinated specifics are the #1 way an idea gets
+disqualified during fact-check review.
+"""
+
+
 # ============================================================
 # Prompt builders (Rounds 2-5)
 # ============================================================
@@ -427,7 +458,7 @@ Task:
 - 10x improvement: How is this 10x better than existing solutions?
 - Use web search to validate each solution: search for competitors, pricing, user reviews
 - For each solution, search "[competitor] vs" and "[competitor] pricing" to understand the landscape
-
+{FACT_CLAIMS_RULE}
 Reply with your complete analysis.{LANG_SUFFIX}"""
 
     elif round_num <= 4:
@@ -447,7 +478,7 @@ Task:
 - If Defender identified "gold" in an idea, dig deeper into that
 - Add specific product form and user experience details
 - Search for analogous companies: "how did [similar company] get first 100 users"
-
+{FACT_CLAIMS_RULE}
 Reply with your complete analysis.{LANG_SUFFIX}"""
 
     else:  # Round 5
@@ -462,7 +493,7 @@ Task:
 - For each idea: core value proposition, target user, why now
 - Use web search to find market size data and recent funding in each idea's space
 - Recommend discussion order and rationale
-
+{FACT_CLAIMS_RULE}
 Reply with your complete analysis.{LANG_SUFFIX}"""
 
 
@@ -546,12 +577,15 @@ Proposer's refined solutions:
 Task — focus on BUSINESS MODEL for each idea:
 - "Who is writing the check? The user or their company?"
 - "What's the natural pricing model? Per-seat? Usage-based? Flat rate?"
-- "What would a competitor charge for this?" (search for reference points)
+- "What would a competitor charge for this?" — when you cite competitor prices, the
+  prices MUST come from the upstream Proposer search results (with `[REF: SEARCH] URL`).
+  If the upstream didn't surface real pricing, write `[assumption]` with rough
+  market-rate reasoning instead of fabricating a specific competitor + dollar amount.
 - "Is there expansion revenue? Can you grow within an account?"
 - Guide toward concrete pricing: "If you had to put a price tag on this TODAY, what would it be?"
 - Cross-check pricing math against the user's `Revenue_threshold` from SESSION CONFIG (if provided);
   default $100K/yr otherwise. The pricing must show a plausible path to that target.
-
+{FACT_CLAIMS_RULE}
 Reply with your complete feedback.{LANG_SUFFIX}"""
 
     elif round_num == 4:
@@ -610,6 +644,13 @@ You join after Proposer + Defender complete 5 rounds of brainstorming with web s
 - Provide comparison analysis (no ranking — that's Defender's job)
 - If "Product Modes" are specified in the context, ALL ideas MUST match those product types
 - If target audience or constraints are specified, ideas must respect them
+{FACT_CLAIMS_RULE}
+This is the FINAL deliverable the user reads. Apply the citation rule above strictly to
+the `revenue_model`, `target_market`, `competitive_landscape`, and `problem` fields —
+those are where hallucinated competitor names + pricing slip in. If the brainstorm
+didn't surface a real source for a specific dollar amount, replace the dollar amount
+with `[assumption]` + reasoning, or use a generic phrase ("low-three-figures
+subscription pricing in line with the segment").
 
 --- CONTEXT (includes user preferences, product modes, constraints) ---
 {context[:4000]}

@@ -24,6 +24,7 @@ from engine.core.ideation_runner import (
     _build_proposer_prompt,
     _build_defender_prompt,
     _build_strategist_prompt,
+    FACT_CLAIMS_RULE,
 )
 
 
@@ -286,3 +287,60 @@ def test_forge_strategist_no_session_config_keeps_default():
     # Default fallback ($10K / 4-8 weeks) must still be mentioned in lean_feasibility guidance
     assert "default" in prompt.lower()
     assert "$10K" in prompt
+
+
+# ---------------------------------------------------------------
+# FACT_CLAIMS source-link rule injected into the prompts most likely
+# to invite hallucinated competitor names + pricing.
+# ---------------------------------------------------------------
+
+def _expects_fact_rule(prompt: str) -> None:
+    """Each rule-bearing prompt must spell out the three required clauses."""
+    assert "Hard-Fact Citation Rule" in prompt
+    assert "[REF: SEARCH] URL" in prompt
+    assert "[assumption]" in prompt
+
+
+def test_fact_claims_rule_constant_has_required_clauses():
+    """The shared rule string itself must mention all three options."""
+    _expects_fact_rule(FACT_CLAIMS_RULE)
+    # It must call out the categories of hard facts so the LLM knows what to cite.
+    for kw in ["pricing", "funding", "market sizes"]:
+        assert kw in FACT_CLAIMS_RULE
+
+
+def test_forge_proposer_r2_through_r5_carry_fact_rule():
+    for r in (2, 3, 4, 5):
+        prompt = _build_proposer_prompt(r, "ctx", "prev defender", "")
+        _expects_fact_rule(prompt)
+
+
+def test_forge_defender_r3_business_model_carries_fact_rule():
+    """Round 3 Business Model is where Defender asks for competitor pricing —
+    the worst hallucination zone."""
+    prompt = _build_defender_prompt(3, "(proposer output)", "ctx", "")
+    _expects_fact_rule(prompt)
+    # Must also explicitly tell Defender to source competitor pricing from upstream
+    # search results, not invent.
+    assert "MUST come from the upstream Proposer search results" in prompt
+
+
+def test_forge_strategist_carries_fact_rule_targeted_at_final_fields():
+    """Strategist final JSON is the user-visible deliverable. Rule must
+    explicitly guard the four hallucination-prone JSON fields."""
+    prompt = _build_strategist_prompt("ctx", "(brainstorm)", "")
+    _expects_fact_rule(prompt)
+    assert "revenue_model" in prompt
+    assert "competitive_landscape" in prompt
+    assert "target_market" in prompt
+
+
+def test_forge_defender_r1_r2_r4_r5_do_not_have_fact_rule():
+    """Only R3 Defender (Business Model Deep-Dive) needs FACT_CLAIMS — other
+    Defender rounds are creative-coach feedback that doesn't generate hard facts.
+    Adding the rule there would just bloat tokens."""
+    for r in (1, 2, 4, 5):
+        prompt = _build_defender_prompt(r, "(proposer output)", "ctx", "")
+        assert "Hard-Fact Citation Rule" not in prompt, (
+            f"R{r} Defender should not carry FACT_CLAIMS — only R3 (Business Model) does"
+        )
