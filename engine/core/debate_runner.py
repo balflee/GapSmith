@@ -327,6 +327,7 @@ Return as markdown."""
 
     # Step 3: Final analysis (gated on citation quality — must cite pricing/benchmark sources)
     benchmark_for_step3 = benchmark_data[:3000] if benchmark_data else ""
+    session_block = f"\n\nSession Config:\n{state.session_config}\n" if state.session_config else ""
     step3_prompt = f"""Round {state.current_round} / Phase B / Step 3: Final Financial Analysis
 
 Based on pricing benchmarks and cost structure, complete the full analysis.
@@ -336,7 +337,7 @@ Pricing benchmarks (from your search + Benchmark Hunter):
 {benchmark_for_step3}
 
 Cost structure (from your search):
-{step2.content[:3000]}
+{step2.content[:3000]}{session_block}
 
 Complete:
 1. Lean Feasibility: 🟢 LEAN_FIT / 🟡 STRETCH / 🔴 NOT_LEAN
@@ -345,7 +346,7 @@ Complete:
 4. Critical assumptions (3-5 "if wrong, conclusion changes" items)
 5. Final verdict: VIABLE / MARGINAL / NOT_VIABLE
 
-Year-1 revenue threshold: >$100K
+Year-1 revenue threshold: use `SESSION_CONFIG.Revenue_threshold` if provided in the Session Config block above (e.g. Solo $30K/yr, Founder Couple $50K/yr); otherwise default $100K/yr. Below threshold = LOW_ROI.
 
 **Critical**: Every competitor price, every cost estimate, every market data point
 MUST have an inline citation — use `[REF: SEARCH] URL` (URLs are in the search

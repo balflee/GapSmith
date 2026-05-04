@@ -211,12 +211,12 @@ Task: Evaluate financial viability under the lean startup lens.
 {factcheck}
 --- END FACT-CHECK ---
 
-Constraints:
-- MVP budget cap: ~$10K
-- Team: 4-5 people, validation cycle: 4-8 weeks
+Constraints (defaults — `SESSION_CONFIG` below overrides any value it specifies):
+- MVP budget cap: ~$10K (use `SESSION_CONFIG.Budget` if provided)
+- Team: 4-5 people, validation cycle: 4-8 weeks (use `SESSION_CONFIG.Team` / `SESSION_CONFIG.Timeline` if provided)
 - All assumptions must have explicit estimation logic (no bare numbers)
 - Search for real competitor pricing, industry ARPU, funding rounds — include URLs
-- Year-1 revenue threshold: >$100K (below = LOW_ROI)
+- Year-1 revenue threshold: use `SESSION_CONFIG.Revenue_threshold` if provided (e.g. Solo $30K/yr, Founder Couple $50K/yr, Small Team $50-80K/yr); else default $100K/yr. Below threshold = LOW_ROI.
 
 Analysis steps:
 1. **Lean Feasibility Check** → 🟢 LEAN_FIT ($10K possible) / 🟡 STRETCH ($10-25K) / 🔴 NOT_LEAN (>$25K)
