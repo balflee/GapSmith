@@ -396,11 +396,15 @@ async def call_sub_agent(
     if retry_length_ok and retry_gate_ok:
         return retry
 
-    # Still failed — surface the issue but keep the longer body
+    # Still failed after one retry — keep the longer body but DO NOT prepend a
+    # warning marker into the content. The marker was leaking into the
+    # user-visible debate transcript and into downstream prompts (where it
+    # confused the LLM more than it helped). The [SUB-AGENT FAIL] print above
+    # remains as the diagnostic signal for ops; quality is now judged by the
+    # downstream agents from the content itself.
     print(f"[SUB-AGENT FAIL] retry also failed (length_ok={retry_length_ok} gate_ok={retry_gate_ok})", flush=True)
-    warning = "[SUB_AGENT_QUALITY_WARNING: citations/length below threshold after one retry]"
     body = retry_content if len(retry_content) > len(content) else content
-    retry.content = f"{warning}\n\n{body}" if body else f"{warning}\n\n(empty)"
+    retry.content = body or "(no usable content from sub-agent)"
     return retry
 
 
