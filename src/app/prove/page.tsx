@@ -223,8 +223,11 @@ function ProveContent() {
   const [overrideForgeContext, setOverrideForgeContext] = useState(false);
   const [loadingForge, setLoadingForge] = useState(true);
   const [selectedModel, setSelectedModel] = useState("gpt-5.4");
-  // Project Context (feeds Analyst's lean feasibility math)
-  const [showContext, setShowContext] = useState(false);
+  // Project Context (feeds Analyst's lean feasibility math). Default open so
+  // users don't forget to fill it — agents otherwise fall back to generic
+  // Small Team / $10K / $100K assumptions. Hidden entirely when a Forge idea
+  // is selected because that path inherits SESSION_CONFIG from Forge instead.
+  const [showContext, setShowContext] = useState(true);
   const [profile, setProfile] = useState<string>("Small Team (4-5)");
   const [budget, setBudget] = useState<string>("$10K");
   const [timeline, setTimeline] = useState<string>("4-8 weeks");

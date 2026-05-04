@@ -318,8 +318,10 @@ function ForgeContent() {
   const [editLabelValue, setEditLabelValue] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  // SESSION_CONFIG (Project Context) — improves Analyst / lean-feasibility accuracy
-  const [showContext, setShowContext] = useState(false);
+  // SESSION_CONFIG (Project Context) — improves Analyst / lean-feasibility accuracy.
+  // Default open so users don't forget to fill it; without this, agents fall back to
+  // generic Small Team / $10K / $100K assumptions that don't match many users.
+  const [showContext, setShowContext] = useState(true);
   const [profile, setProfile] = useState<string>("Small Team (4-5)");
   const [budget, setBudget] = useState<string>("$10K");
   const [timeline, setTimeline] = useState<string>("4-8 weeks");
