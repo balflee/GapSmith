@@ -1,7 +1,14 @@
 #!/usr/bin/env node
-// Auto-applies SQL migrations during Vercel build.
-// Requires POSTGRES_URL_NON_POOLING (injected by Supabase Vercel Integration).
-// Skips silently when env var absent (local dev, CI).
+// Auto-applies SQL migrations during webapp build (Vercel / Railway / etc).
+// Requires POSTGRES_URL_NON_POOLING — Supabase's "Direct connection" URL.
+// On Vercel: injected automatically by the Supabase Vercel Integration.
+// On Railway: must be added manually as a service variable (paste the value
+//   from Supabase Dashboard → Project Settings → Database → Connection String
+//   → "Direct connection (Session mode)").
+// Skips silently when env var absent (local dev, CI without DB access).
+//
+// Manual fallback for any environment: `npx supabase db push` after
+// running `npx supabase link --project-ref <ref>` once.
 
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -9,7 +16,12 @@ import pg from "pg";
 
 const connectionString = process.env.POSTGRES_URL_NON_POOLING;
 if (!connectionString) {
-  console.log("[auto-migrate] POSTGRES_URL_NON_POOLING not set — skipping.");
+  console.log("[auto-migrate] POSTGRES_URL_NON_POOLING not set — skipping migrations.");
+  console.log("[auto-migrate] If this is a production build, either:");
+  console.log("[auto-migrate]   (a) add POSTGRES_URL_NON_POOLING to your deploy env");
+  console.log("[auto-migrate]       (Supabase Dashboard → Database → Connection String → Direct), or");
+  console.log("[auto-migrate]   (b) run `npx supabase db push` manually after committing migrations.");
+  console.log("[auto-migrate] Silent skip is fine for local dev / CI without DB access.");
   process.exit(0);
 }
 
