@@ -112,6 +112,13 @@ export default function ApiDocsPage() {
 
         {/* Quick links */}
         <div className="mt-6 flex flex-wrap gap-2 text-xs">
+          <Link
+            href="/docs/api/playground"
+            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-semibold text-white transition-transform hover:translate-y-[-1px]"
+            style={{ background: SOLANA_GRADIENT, boxShadow: `0 4px 12px ${SOLANA_PURPLE}30` }}
+          >
+            ⚡ Try in Playground
+          </Link>
           <a href="#quickstart" className="rounded-full px-3 py-1" style={{ background: CODE_BG, color: FG, boxShadow: `inset 0 0 0 1px ${BORDER}` }}>Quickstart</a>
           <a href="#flow" className="rounded-full px-3 py-1" style={{ background: CODE_BG, color: FG, boxShadow: `inset 0 0 0 1px ${BORDER}` }}>x402 flow</a>
           <a href="#endpoints" className="rounded-full px-3 py-1" style={{ background: CODE_BG, color: FG, boxShadow: `inset 0 0 0 1px ${BORDER}` }}>Endpoints</a>

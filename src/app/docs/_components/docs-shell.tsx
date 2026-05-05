@@ -31,12 +31,13 @@ const NAV: Array<{ section: string; items: Array<{ href: string; label: string; 
     section: "Services",
     items: [
       { href: "/docs/api", label: "Agent API reference" },
+      { href: "/docs/api/playground", label: "API Playground", tag: "NEW" },
       { href: "/docs/done-for-you", label: "Done-For-You" },
     ],
   },
 ];
 
-export function DocsShell({ active, children }: { active: string; children: ReactNode }) {
+export function DocsShell({ active, children, wide }: { active: string; children: ReactNode; wide?: boolean }) {
   return (
     <div className="min-h-screen" style={{ background: "oklch(0.98 0.008 85)" }}>
       <div className="mx-auto flex max-w-7xl gap-8 px-6 py-10 lg:py-14">
@@ -123,7 +124,7 @@ export function DocsShell({ active, children }: { active: string; children: Reac
 
         {/* Content */}
         <main className="min-w-0 flex-1">
-          <div className="mx-auto max-w-3xl">{children}</div>
+          <div className={`mx-auto ${wide ? "max-w-5xl" : "max-w-3xl"}`}>{children}</div>
         </main>
       </div>
     </div>

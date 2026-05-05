@@ -38,6 +38,14 @@ interface Entry {
 const ENTRIES: Entry[] = [
   {
     date: "2026-05-05",
+    tag: "feature",
+    title: "/docs/api/playground — interactive API explorer",
+    detail:
+      "Pick any of the 7 endpoints, tweak query/body params via a form, and copy a runnable curl / Python / TypeScript snippet. Sample-response tab shows real production payloads (gaps, pain clusters, kill briefs) so judges and integrators can see actual output shapes without spending USDC.",
+    commit: "(staged)",
+  },
+  {
+    date: "2026-05-05",
     tag: "api",
     title: "PIVOT_OUT is now a distinct verdict on /api/v1/prove/debate",
     detail:

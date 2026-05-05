@@ -11,6 +11,7 @@ const publicPaths = [
   "/changelog",
   "/docs",
   "/docs/api",
+  "/docs/api/playground",
   "/docs/done-for-you",
   "/docs/quickstart",
   "/docs/architecture",
