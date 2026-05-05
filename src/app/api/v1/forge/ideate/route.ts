@@ -30,16 +30,37 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withX402Payment, type X402RequestContext } from "@/lib/x402-server";
 import { createServiceRoleClient } from "@/lib/supabase-server";
+import {
+  SESSION_CONFIG_PROFILES,
+  SESSION_CONFIG_BUDGETS,
+  SESSION_CONFIG_TIMELINES,
+  SESSION_CONFIG_REVENUE_THRESHOLDS,
+  serializeSessionConfig,
+} from "@/lib/session-config";
+
+// Structured form — preferred for agents (LLMs picking enum values is
+// far more reliable than them constructing the markdown by hand).
+const sessionConfigObject = z.object({
+  profile: z.enum(SESSION_CONFIG_PROFILES).optional(),
+  budget: z.enum(SESSION_CONFIG_BUDGETS).optional(),
+  timeline: z.enum(SESSION_CONFIG_TIMELINES).optional(),
+  revenue_threshold: z.enum(SESSION_CONFIG_REVENUE_THRESHOLDS).optional(),
+  founder_signal: z.string().max(2000).optional(),
+}).strict();
 
 const bodySchema = z.object({
   sectors: z.array(z.string().max(100)).max(10).optional().default([]),
   context: z.string().max(10000).optional().default(""),
   product_modes: z.array(z.string().max(100)).max(20).optional().default([]),
-  // SESSION_CONFIG.md the agent wants Forge to calibrate against — Profile,
-  // Budget, Timeline, Revenue_threshold, optional Founder Signal. Same format
-  // as the human-facing /forge UI emits via buildSessionConfig().
+  // SESSION_CONFIG the agent wants Forge to calibrate against. Accepts EITHER:
+  //   (a) structured object {profile, budget, timeline, revenue_threshold,
+  //       founder_signal} with enum-validated values — preferred form,
+  //       OpenAPI lists the legal values explicitly.
+  //   (b) raw SESSION_CONFIG.md markdown string — backward-compatible with
+  //       agents already in production that build the markdown by hand.
+  // Either way the engine sees the same canonical markdown internally.
   // Empty/omitted falls back to default Small Team / $10K / 4-8 weeks / $100K.
-  session_config: z.string().max(5000).optional().default(""),
+  session_config: z.union([z.string().max(5000), sessionConfigObject]).optional(),
   webhook_url: z.string().url().max(500).optional(),
 });
 
@@ -69,6 +90,12 @@ async function handler(request: Request, ctx: X402RequestContext): Promise<Respo
 
   const sb = createServiceRoleClient();
 
+  // Normalize structured object into the canonical SESSION_CONFIG.md
+  // markdown before persisting / forwarding. String form passes through.
+  const sessionConfigMarkdown = typeof body.session_config === "string"
+    ? body.session_config
+    : serializeSessionConfig(body.session_config);
+
   // 1. Create a forge_sessions row (engine writes progress + final result here).
   //    user_id is NULL for agent runs — we identify by agent_job_id linkage.
   //    Since forge_sessions.user_id is NOT NULL, use a placeholder UUID per docs.
@@ -78,7 +105,7 @@ async function handler(request: Request, ctx: X402RequestContext): Promise<Respo
     .insert({
       user_id: AGENT_PSEUDO_USER,
       status: "pending",
-      session_config: body.session_config,
+      session_config: sessionConfigMarkdown,
     })
     .select("id")
     .single();

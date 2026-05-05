@@ -309,9 +309,52 @@
                   "context": { "type": "string", "maxLength": 10000 },
                   "product_modes": { "type": "array", "items": { "type": "string" } },
                   "session_config": {
-                    "type": "string",
-                    "maxLength": 5000,
-                    "description": "Optional SESSION_CONFIG.md the engine calibrates against. Lines like `Profile: Solo`, `Budget: $1K`, `Timeline: 3-6 months`, `Revenue_threshold: $50K/year`. Empty falls back to default Small Team / $10K / 4-8 weeks / $100K."
+                    "description": "Optional SESSION_CONFIG the engine calibrates against. Accepts EITHER a structured object (preferred — enum-validated) OR raw SESSION_CONFIG.md markdown (backward-compatible). Empty falls back to default Small Team / $10K / 4-8 weeks / $100K.",
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "profile": {
+                            "type": "string",
+                            "enum": ["Solo", "Small Team (2-3)", "Small Team (4-5)", "Funded Team (6-15)", "Enterprise"],
+                            "description": "Team profile — calibrates Analyst's lean-feasibility math."
+                          },
+                          "budget": {
+                            "type": "string",
+                            "enum": ["$1K", "$5K", "$10K", "$25K", "$50K", "$100K+"],
+                            "description": "MVP budget cap. LEAN_FIT band scales proportionally to this value."
+                          },
+                          "timeline": {
+                            "type": "string",
+                            "enum": ["2 weeks", "4 weeks", "4-8 weeks", "8-12 weeks", "3-6 months"],
+                            "description": "Validation timeline."
+                          },
+                          "revenue_threshold": {
+                            "type": "string",
+                            "enum": ["$10K/year", "$50K/year", "$100K/year", "$500K/year", "$1M+/year"],
+                            "description": "Year-1 revenue target. Ideas projecting below this are tagged LOW_ROI."
+                          },
+                          "founder_signal": {
+                            "type": "string",
+                            "maxLength": 2000,
+                            "description": "Free-form founder background / unfair-advantage statement."
+                          }
+                        },
+                        "example": {
+                          "profile": "Solo",
+                          "budget": "$1K",
+                          "timeline": "3-6 months",
+                          "revenue_threshold": "$50K/year",
+                          "founder_signal": "8 years payments infra, ex-Stripe."
+                        }
+                      },
+                      {
+                        "type": "string",
+                        "maxLength": 5000,
+                        "description": "Raw SESSION_CONFIG.md. Lines like `Profile: Solo`, `Budget: $1K`, `Timeline: 3-6 months`, `Revenue_threshold: $50K/year`, optional `Signal: ...`."
+                      }
+                    ]
                   },
                   "webhook_url": { "type": "string", "format": "uri", "description": "Optional: POST result here when done" }
                 }

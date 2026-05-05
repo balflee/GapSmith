@@ -341,9 +341,16 @@ curl -i "https://gapsmith.draftlabs.org/api/v1/scout/gaps?sector=ai-ml"`}</CodeB
 resp = x402_post("https://.../api/v1/forge/ideate", body={
     "sectors": ["ai-ml"],
     "context": "Find SaaS gaps in agent observability tooling",
-    # Optional: calibrate to your real constraints. Without this the engine
-    # falls back to default Small Team / $10K / 4-8 weeks / $100K/yr.
-    "session_config": "Profile: Solo\\nBudget: $1K\\nTimeline: 3-6 months\\nRevenue_threshold: $50K/year",
+    # Optional: calibrate to your real constraints. Pass either a structured
+    # object (preferred — enums caught by zod) or raw SESSION_CONFIG.md.
+    # Without it the engine falls back to default Small Team / $10K / 4-8 weeks / $100K.
+    "session_config": {
+        "profile": "Solo",                # Solo | Small Team (2-3) | Small Team (4-5) | Funded Team (6-15) | Enterprise
+        "budget": "$1K",                  # $1K | $5K | $10K | $25K | $50K | $100K+
+        "timeline": "3-6 months",         # 2 weeks | 4 weeks | 4-8 weeks | 8-12 weeks | 3-6 months
+        "revenue_threshold": "$50K/year", # $10K/year | $50K/year | $100K/year | $500K/year | $1M+/year
+        "founder_signal": "8 years payments infra, ex-Stripe."
+    },
     "webhook_url": "https://my-agent.com/forge-callback"   # optional
 })
 # resp.status_code == 202

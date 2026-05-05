@@ -248,18 +248,18 @@ def demo_compute_api(keypair: Keypair, network: str) -> None:
         "sectors": ["ai-ml"],
         "context": "Find a SaaS gap in agent observability — what frustrates devs running multi-agent pipelines in production?",
         "product_modes": ["saas"],
-        # Optional: SESSION_CONFIG.md the engine calibrates against. Lines like
-        # `Profile: Solo`, `Budget: $1K`, `Timeline: 3-6 months`,
-        # `Revenue_threshold: $50K/year` shape the lean-feasibility rating and
-        # revenue projections. Empty falls back to default Small Team / $10K /
-        # 4-8 weeks / $100K.
-        "session_config": (
-            "## Project Profile\n"
-            "Profile: Solo\n"
-            "Budget: $1K\n"
-            "Timeline: 3-6 months\n"
-            "Revenue_threshold: $50K/year\n"
-        ),
+        # Optional: calibrate the engine to YOUR constraints. The structured
+        # form is enum-validated server-side (zod will reject typos like
+        # "solo" or "$1k"); see /docs/api for the full enum list.
+        # Empty/omitted falls back to default Small Team / $10K / 4-8 weeks / $100K.
+        "session_config": {
+            "profile": "Solo",
+            "budget": "$1K",
+            "timeline": "3-6 months",
+            "revenue_threshold": "$50K/year",
+            "founder_signal": "Solo dev — 8 years payments infra, deep agent-observability domain.",
+        },
+        # Backward-compat: passing a raw SESSION_CONFIG.md string is also accepted.
     }
     resp = x402_request("POST", url, keypair=keypair, network=network, json_body=body, timeout=60)
     if resp.status_code != 202:
