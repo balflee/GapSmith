@@ -154,9 +154,9 @@ async function handler(_request: Request, ctx: X402RequestContext): Promise<Resp
 
 export const POST = withX402Payment(handler, {
   description: "Run a 6-persona Prove debate (multi-round adversarial stress-test of a single idea, ~60 min). Returns 202 + jobId for async polling.",
-  // TEMP: lowered from 25 USDC → 0.50 USDC for hackathon mainnet E2E testing.
+  // TEMP: lowered from 25 USDC → 0.10 USDC for hackathon mainnet E2E testing.
   // Revert to BigInt(25_000_000) before public launch.
-  priceUsdcAtomic: BigInt(500_000), // 0.50 USDC (TEMP — was 25 USDC)
+  priceUsdcAtomic: BigInt(100_000), // 0.10 USDC (TEMP — was 25 USDC)
   async: true,
   maxTimeoutSeconds: 60,
   validateBody: (raw) => {
