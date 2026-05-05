@@ -24,6 +24,23 @@ SEARCHES_PER_CALL = 3
 LANG_SUFFIX = "\n\n**IMPORTANT: Your entire response MUST be in English. Do not use Chinese or any other language.**"
 
 
+def _max_tokens_for(model: str | None, base: int) -> int:
+    """Model-aware max_tokens bump.
+
+    MiniMax-M2.7 (and likely M2.5) consistently produces ~1.5-2x longer
+    output than Claude / GPT / Gemini for the same prompts — verbose preamble,
+    extra section headers, longer reasoning before answers. With our default
+    caps tuned for the leaner models, MiniMax hits the truncation gate and
+    forces an [ADAPTIVE] retry that wastes ~30-60s per call.
+
+    Bumping the cap up-front for MiniMax skips the retry without changing
+    behavior for any other model.
+    """
+    if model and "minimax" in model.lower():
+        return base * 2
+    return base
+
+
 # ============================================================
 # Search-augmented LLM call
 # ============================================================
@@ -262,7 +279,8 @@ Output requirements:
 
 Reply with your complete pain point research.{LANG_SUFFIX}"""
 
-    r1 = await _call_with_gate(providers, prompt=step1_prompt, validator=validate_pain_discovery, max_tokens=4096)
+    r1 = await _call_with_gate(providers, prompt=step1_prompt, validator=validate_pain_discovery,
+                                max_tokens=_max_tokens_for(providers.model, 4096))
     cost += r1.cost_usd; in_tok += r1.input_tokens; out_tok += r1.output_tokens
     step1_output = r1.content
 
@@ -285,7 +303,8 @@ For each pain point, search for:
 
 Output: For each pain point, provide frequency marker + evidence.{LANG_SUFFIX}"""
 
-    r2 = await _call_with_gate(providers, prompt=step2_prompt, validator=validate_prevalence, max_tokens=4096)
+    r2 = await _call_with_gate(providers, prompt=step2_prompt, validator=validate_prevalence,
+                                max_tokens=_max_tokens_for(providers.model, 4096))
     cost += r2.cost_usd; in_tok += r2.input_tokens; out_tok += r2.output_tokens
     step2_output = r2.content
 
@@ -308,7 +327,8 @@ Mark each pain point:
 
 Output: Competitive marker + search findings for each pain point.{LANG_SUFFIX}"""
 
-    r3 = await _call_with_gate(providers, prompt=step3_prompt, validator=validate_competitive, max_tokens=4096)
+    r3 = await _call_with_gate(providers, prompt=step3_prompt, validator=validate_competitive,
+                                max_tokens=_max_tokens_for(providers.model, 4096))
     cost += r3.cost_usd; in_tok += r3.input_tokens; out_tok += r3.output_tokens
     step3_output = r3.content
 
@@ -344,7 +364,8 @@ Task:
 {FACT_CLAIMS_RULE}
 Reply with your complete pain analysis + solution designs.{LANG_SUFFIX}"""
 
-    r4 = await _call_llm_with_search(providers, prompt=step4_prompt, max_tokens=4096)
+    r4 = await _call_llm_with_search(providers, prompt=step4_prompt,
+                                       max_tokens=_max_tokens_for(providers.model, 4096))
     cost += r4.cost_usd; in_tok += r4.input_tokens; out_tok += r4.output_tokens
     step4_output = r4.content
 
@@ -718,7 +739,18 @@ You MUST respond with a JSON object (no markdown fences, no extra text). The sch
 CRITICAL: You MUST output EXACTLY 3 ideas in the "ideas" array. Not 1, not 2, not 4. Exactly 3.
 If the brainstorm only surfaced 2 strong ideas, generate a third from a different angle.
 
-Return ONLY the JSON object. No markdown code fences. No explanation before or after."""
+═══════════════════════════════════════════════════════════════════
+ABSOLUTELY CRITICAL — JSON-ONLY OUTPUT (read this BEFORE responding):
+═══════════════════════════════════════════════════════════════════
+- Your ENTIRE response must be a single JSON object.
+- The first character of your response MUST be `{{`. Not a newline. Not "Here is...".
+  Not "I've analyzed...". Not a markdown fence. Just `{{`.
+- The last character of your response MUST be `}}`. Not a period. Not whitespace.
+- NO preamble. NO postamble. NO commentary. NO markdown code fences (no ```json).
+- A response that does NOT start with `{{` will FAIL parsing and trigger a costly
+  retry that wastes your tokens and the user's time. Don't do this.
+- If you are tempted to write "Here is the JSON output:" — RESIST. Just emit `{{`.
+═══════════════════════════════════════════════════════════════════"""
 
 
 # ============================================================
@@ -853,9 +885,13 @@ async def _retry_strategist_json(
     raw_output: str, providers: Providers,
 ) -> tuple[list[dict], float, int, int]:
     """Retry Strategist with explicit JSON instruction when first attempt failed."""
-    retry_prompt = f"""Your previous response was not valid JSON. Output ONLY the JSON object.
+    retry_prompt = f"""Your previous response failed JSON parsing. Output ONLY the JSON object.
 
-Here is the content to convert to JSON (extract the Top 3 ideas):
+CRITICAL: First character of response = `{{`. Last character = `}}`. NO preamble.
+NO "Here is...". NO markdown fences. NO commentary. Just raw JSON, nothing else.
+A second failure wastes more tokens — get it right this time.
+
+Content to convert to JSON (extract Top 3 ideas):
 {raw_output[:4000]}
 
 You MUST output EXACTLY 3 ideas. The JSON schema:
@@ -864,7 +900,8 @@ You MUST output EXACTLY 3 ideas. The JSON schema:
 EXACTLY 3 ideas. Return ONLY valid JSON. No markdown fences."""
 
     response = await providers.llm.call(
-        prompt=retry_prompt, model=providers.model, max_tokens=6000, temperature=0.2,
+        prompt=retry_prompt, model=providers.model,
+        max_tokens=_max_tokens_for(providers.model, 6000), temperature=0.2,
     )
     ideas = _parse_strategist_output(response.content)
     return ideas, response.cost_usd, response.input_tokens, response.output_tokens
@@ -923,7 +960,8 @@ Respond with ONLY a JSON object (no markdown fences):
 {LANG_SUFFIX}"""
 
         response = await providers.llm.call(
-            prompt=fill_prompt, model=providers.model, max_tokens=2000, temperature=0.5,
+            prompt=fill_prompt, model=providers.model,
+            max_tokens=_max_tokens_for(providers.model, 2000), temperature=0.5,
         )
         cost += response.cost_usd
         in_tok += response.input_tokens
@@ -1212,7 +1250,17 @@ As the {agent}, pick the 1 WEAKEST idea to eliminate. Consider:
 
 {perspective}
 
-Respond in JSON (no markdown fences):
+═══════════════════════════════════════════════════════════════════
+JSON-ONLY RESPONSE (read before answering):
+═══════════════════════════════════════════════════════════════════
+- Your response MUST be a single line of raw JSON: `{{"kill": "...", "reason": "..."}}`
+- The first character MUST be `{{`. NO preamble like "I'll analyze..." or "Looking at...".
+- NO markdown code fences (no ```json).
+- The "reason" field is a SINGLE STRING, max 2-3 sentences (~150 chars).
+- A response that doesn't start with `{{` triggers a costly retry that wastes tokens.
+═══════════════════════════════════════════════════════════════════
+
+JSON shape:
 {{"kill": "exact idea name", "reason": "2-3 sentences"}}
 
 The name MUST be one of: {names}"""
@@ -1233,7 +1281,12 @@ The name MUST be one of: {names}"""
                 sc=sc_block,
             )
             resp = await providers.llm.call(
-                prompt=prompt, model=model, max_tokens=500, temperature=0.3,
+                prompt=prompt, model=model,
+                # Kill-vote prompt asks for tiny JSON, but MiniMax wraps it in
+                # prose preamble that blows past 500 tokens and triggers an
+                # adaptive retry. Bump default to 1500 so the first call carries
+                # enough room (and _max_tokens_for doubles it to 3000 for MiniMax).
+                max_tokens=_max_tokens_for(model, 1500), temperature=0.3,
                 system_prompt=AGENT_SYSTEM_PROMPTS.get(agent),
             )
             parsed = _parse_json_response(resp.content)
@@ -1312,7 +1365,8 @@ RESPOND WITH ONLY THIS JSON, NOTHING ELSE:
             perspective=rice_perspectives[agent],
         )
         resp = await providers.llm.call(
-            prompt=prompt, model=model, max_tokens=1500, temperature=0.2,
+            prompt=prompt, model=model,
+            max_tokens=_max_tokens_for(model, 1500), temperature=0.2,
             system_prompt=AGENT_SYSTEM_PROMPTS.get(agent),
         )
         parsed = _parse_json_response(resp.content)
@@ -1535,7 +1589,8 @@ async def run_ideation(
         await progress("brainstorm", "Round 1/5: Defender filtering pain points...", 32)
         defender_prompt = _build_defender_prompt(1, r1_output, context, session_config)
         defender_response = await providers.llm.call(
-            prompt=defender_prompt, model=model, max_tokens=3000,
+            prompt=defender_prompt, model=model,
+            max_tokens=_max_tokens_for(model, 3000),
         )
         total_cost += defender_response.cost_usd
         total_in += defender_response.input_tokens
@@ -1569,11 +1624,12 @@ async def run_ideation(
             if round_num == 2:
                 proposer_response = await _call_with_gate(
                     providers, prompt=proposer_prompt, validator=validate_solution_design,
-                    max_tokens=4096, use_search=True,
+                    max_tokens=_max_tokens_for(model, 4096), use_search=True,
                 )
             else:
                 proposer_response = await _call_llm_with_search(
-                    providers, prompt=proposer_prompt, max_tokens=4096,
+                    providers, prompt=proposer_prompt,
+                    max_tokens=_max_tokens_for(model, 4096),
                 )
             total_cost += proposer_response.cost_usd
             total_in += proposer_response.input_tokens
@@ -1586,7 +1642,8 @@ async def run_ideation(
             await progress("brainstorm", f"Round {round_num}/{MAX_ROUNDS}: Defender responding...", pct_base + 7)
             defender_prompt = _build_defender_prompt(round_num, proposer_output, context, session_config)
             defender_response = await providers.llm.call(
-                prompt=defender_prompt, model=model, max_tokens=3000,
+                prompt=defender_prompt, model=model,
+                max_tokens=_max_tokens_for(model, 3000),
             )
             total_cost += defender_response.cost_usd
             total_in += defender_response.input_tokens
@@ -1615,7 +1672,8 @@ async def run_ideation(
 
         strategist_prompt = _build_strategist_prompt(context, brainstorm, session_config)
         strategist_response = await providers.llm.call(
-            prompt=strategist_prompt, model=model, max_tokens=8192,
+            prompt=strategist_prompt, model=model,
+            max_tokens=_max_tokens_for(model, 8192),
             temperature=0.4,
         )
         total_cost += strategist_response.cost_usd
