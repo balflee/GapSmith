@@ -272,6 +272,41 @@ curl -i "https://gapsmith.draftlabs.org/api/v1/scout/gaps?sector=ai-ml"`}</CodeB
           </ul>
         </Section>
 
+        <Section id="devnet" title="Testing on devnet (no real USDC)">
+          <p style={{ color: MUTED, lineHeight: 1.65 }}>
+            Production calls to <InlineCode>/api/v1/*</InlineCode> default to
+            <strong> Solana mainnet </strong> — settlement is real USDC.
+            For integration testing without burning funds, append{" "}
+            <InlineCode>?network=devnet</InlineCode> to the request URL. The
+            server then advertises devnet USDC mint + a devnet merchant ATA in
+            its 402 response, and verifies the signed tx on Solana devnet.
+          </p>
+          <CodeBlock>{`# Probe → 402 advertising devnet USDC mint + devnet merchant ATA
+curl -i 'https://gapsmith.draftlabs.org/api/v1/scout/gaps?sector=ai-ml&network=devnet'
+
+# 402 body (abridged):
+# {
+#   "accepts": [{
+#     "network": "solana-devnet",
+#     "asset": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",   ← devnet USDC mint
+#     "payTo": "<devnet merchant ATA>",
+#     "maxAmountRequired": "100000"   // 0.10 USDC, atomic
+#   }]
+# }
+
+# Fund a devnet wallet:
+#   SOL:  https://faucet.solana.com (request 1 SOL)
+#   USDC: https://faucet.circle.com (request a few USDC on Solana devnet)
+# then sign + submit a transferChecked tx to the advertised ATA, retry with X-PAYMENT.`}</CodeBlock>
+          <p className="text-sm" style={{ color: MUTED, lineHeight: 1.6 }}>
+            <InlineCode>examples/agent_demo.py</InlineCode> runs on devnet by
+            default — pass <InlineCode>--mainnet</InlineCode> when you&apos;re
+            ready to settle in real USDC. The exact same code path runs in
+            both modes; only the network query parameter, mint, and merchant
+            ATA differ.
+          </p>
+        </Section>
+
         {/* Endpoints */}
         <Section id="endpoints" title="Endpoints">
           <h3 className="font-heading text-lg font-bold" style={{ color: FG }}>
