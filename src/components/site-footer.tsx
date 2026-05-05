@@ -31,6 +31,7 @@ const COLS: Array<{ heading: string; links: Array<{ href: string; label: string;
   {
     heading: "Company",
     links: [
+      { href: "/changelog", label: "Changelog" },
       { href: "/contact", label: "Contact" },
       { href: "https://solscan.io/account/BuBjMDp2B9dPxFHjWU4qWZBQKKWkAXoiPts2GWGN9Rbv", label: "Merchant wallet", external: true },
     ],
