@@ -39,6 +39,13 @@ Same intelligence, exposed at `/api/v1/*`, paid per-call in USDC over x402.
 | Discovery | `GET /api/v1/sectors` | free | lists sectors with cached data |
 | Jobs | `GET /api/v1/jobs/{jobId}` | free | poll async job status |
 
+`POST /api/v1/forge/ideate` accepts an optional structured `session_config`
+({ `profile`, `budget`, `timeline`, `revenue_threshold`, `founder_signal` }
+with enum-validated values — see the [OpenAPI spec](https://gapsmith.draftlabs.org/api/v1/openapi))
+so agents can calibrate the brainstorm to their own constraints rather than
+defaulting to a generic Small Team / $10K / 4-8 weeks profile. Plain
+SESSION_CONFIG.md strings are also accepted for backward compatibility.
+
 **Flow:**
 ```
 GET /api/v1/scout/gaps?sector=ai-ml
@@ -47,6 +54,12 @@ GET /api/v1/scout/gaps?sector=ai-ml
   → retry with X-PAYMENT: base64(JSON{ txSignature })
   → 200 OK { gaps, count, ... }
 ```
+
+**No-burn safety**: any POST endpoint with a body validator returns 422
+*before* the 402 advertisement when the body is malformed (wrong enum,
+missing field, type mismatch). Agents can probe-test request shapes for
+free; a 402 response is a positive signal that the body shape is OK and
+the only thing left is to settle the USDC tx.
 
 `tx_hash` is `UNIQUE` in `agent_jobs` for idempotency. Replays return the cached response (sync) or 409 (async). Compute API jobs accept an optional `webhook_url` — results POST back with an HMAC-SHA256 signature.
 
@@ -95,7 +108,7 @@ A self-contained Python reference implementation lives at [`examples/agent_demo.
 | `prove_sessions` | Prove debate transcript + verdict |
 | `purchases` | Stripe and x402 SKU purchases (lifetime access) |
 | `purchase_counts` | Bonding-curve step counter per SKU |
-| `usage_quota` | 365-day rolling usage counters |
+| `usage_counters` | 365-day rolling usage counters |
 | `agent_jobs` | Every paid x402 API call (`tx_hash UNIQUE` for idempotency, `jobId` as capability token for status polling) |
 | `dfy_orders` | Done-For-You service orders |
 
@@ -143,7 +156,7 @@ See [`.env.example`](.env.example) for the full list. Minimum:
 - `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`
 - `ENCRYPTION_SECRET` (`openssl rand -hex 32`)
 - `RESEND_API_KEY`, `RESEND_FROM`
-- For x402: `X402_MERCHANT_WALLET`, `SOLANA_RPC_URL` (Helius recommended), `SOL_NETWORK=devnet|mainnet`
+- For x402: `X402_MERCHANT_WALLET`, `SOLANA_RPC_URL` (server-side Helius URL), `NEXT_PUBLIC_SOLANA_RPC_URL` (browser-side Helius URL with origin restriction — Phantom pre-flight reads SOL/USDC balance via this), `SOL_NETWORK=devnet|mainnet`
 - For pipelines: `TAVILY_API_KEY` (search fallback), plus user-supplied LLM keys via the in-app Settings page
 
 ### Tests
@@ -215,7 +228,7 @@ gapsmith/
 │   └── adapters/               # litellm, supabase, tavily
 ├── supabase/
 │   ├── config.toml
-│   └── migrations/             # 014 migrations covering full schema
+│   └── migrations/             # 015 migrations covering full schema
 ├── scripts/auto-migrate.mjs    # idempotent migration runner (wired into prebuild)
 ├── examples/agent_demo.py      # x402 reference impl (Python)
 ├── e2e/                        # Playwright suites
