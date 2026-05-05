@@ -61,7 +61,15 @@ export interface X402RequestContext {
   network: SolanaNetwork;
   amountAtomic: bigint;
   endpoint: string;
+  /** Pre-validated body when `validateBody` is configured. Handler can read
+   *  this directly without re-parsing the request stream. */
+  validatedBody?: unknown;
 }
+
+/** Result returned by an X402WrapperConfig.validateBody function. */
+export type ValidateBodyResult =
+  | { ok: true; body: unknown }
+  | { ok: false; errors: unknown };
 
 export interface X402WrapperConfig {
   /** Human-readable description of the resource being sold (shown in 402 body). */
@@ -72,6 +80,26 @@ export interface X402WrapperConfig {
   async?: boolean;
   /** Max time the agent should wait for the response. Default 60s for sync. */
   maxTimeoutSeconds?: number;
+  /**
+   * Optional body validator run BEFORE the 402 payment check, so an agent
+   * sending an obviously invalid body gets a 422 immediately and never
+   * pays for a request that will be rejected after on-chain settlement.
+   *
+   * Wrap your zod schema like:
+   *   validateBody: (raw) => {
+   *     const r = mySchema.safeParse(raw);
+   *     return r.success
+   *       ? { ok: true, body: r.data }
+   *       : { ok: false, errors: r.error.flatten() };
+   *   }
+   *
+   * Only runs for methods that carry a body (POST/PUT/PATCH). For GET
+   * endpoints (the Scout Data API), leave this undefined.
+   *
+   * Validated body is passed to the handler via ctx.validatedBody so the
+   * handler doesn't re-parse.
+   */
+  validateBody?: (rawBody: unknown) => ValidateBodyResult | Promise<ValidateBodyResult>;
 }
 
 const SOLANA_NETWORK_LABEL: Record<SolanaNetwork, "solana" | "solana-devnet"> = {
@@ -187,6 +215,41 @@ export function withX402Payment(
 
     const paymentHeader = request.headers.get("x-payment") ?? request.headers.get("X-PAYMENT");
     const payment = parsePaymentHeader(paymentHeader);
+
+    // Pre-payment body validation. Run BEFORE the 402 advertisement so an
+    // agent sending an obviously malformed body (wrong enum, missing field,
+    // type mismatch) gets 422 immediately and can fix the call without
+    // burning USDC on a request that would be rejected after on-chain
+    // settlement. Skipped entirely on GET (no body) and when no validator
+    // is configured.
+    let validatedBody: unknown = undefined;
+    const method = request.method.toUpperCase();
+    const methodHasBody = method === "POST" || method === "PUT" || method === "PATCH";
+    if (config.validateBody && methodHasBody) {
+      let rawBody: unknown = undefined;
+      try {
+        // Read once and clone for downstream consumers (handler may call .json() again).
+        const text = await request.clone().text();
+        rawBody = text.length === 0 ? {} : JSON.parse(text);
+      } catch {
+        return NextResponse.json(
+          { error: "Invalid JSON body", code: "invalid_json" },
+          { status: 400 },
+        );
+      }
+      const result = await config.validateBody(rawBody);
+      if (!result.ok) {
+        return NextResponse.json(
+          {
+            error: "Request body failed validation",
+            code: "invalid_body",
+            details: result.errors,
+          },
+          { status: 422 },
+        );
+      }
+      validatedBody = result.body;
+    }
 
     // No payment → return 402 with requirements
     if (!payment) {
@@ -309,6 +372,7 @@ export function withX402Payment(
       network,
       amountAtomic: config.priceUsdcAtomic,
       endpoint: url.pathname,
+      validatedBody,
     };
 
     try {

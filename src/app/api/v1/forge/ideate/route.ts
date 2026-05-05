@@ -78,15 +78,10 @@ async function handler(request: Request, ctx: X402RequestContext): Promise<Respo
     );
   }
 
-  let body;
-  try {
-    body = bodySchema.parse(await request.json().catch(() => ({})));
-  } catch (err) {
-    if (err instanceof z.ZodError) {
-      return NextResponse.json({ error: "Invalid request body", issues: err.issues }, { status: 400 });
-    }
-    return NextResponse.json({ error: "Could not parse body" }, { status: 400 });
-  }
+  // Body is pre-validated by withX402Payment's validateBody hook (see config
+  // below) so an invalid payload returns 422 BEFORE the agent ever pays.
+  // ctx.validatedBody is guaranteed to satisfy bodySchema once we reach here.
+  const body = ctx.validatedBody as z.infer<typeof bodySchema>;
 
   const sb = createServiceRoleClient();
 
@@ -176,4 +171,13 @@ export const POST = withX402Payment(handler, {
   priceUsdcAtomic: BigInt(15_000_000), // 15 USDC
   async: true,
   maxTimeoutSeconds: 60, // for 402 negotiation only — actual job runs ~30 min
+  // Pre-payment body validation: agents posting an invalid body (wrong
+  // session_config enum, missing fields, etc.) get 422 immediately so they
+  // never burn 15 USDC on a request that would be rejected after settlement.
+  validateBody: (raw) => {
+    const r = bodySchema.safeParse(raw);
+    return r.success
+      ? { ok: true, body: r.data }
+      : { ok: false, errors: r.error.flatten() };
+  },
 });
