@@ -428,7 +428,7 @@
         },
         "responses": {
           "202": {
-            "description": "Job accepted; poll status. Result payload contains { verdict, report, rounds, votes, session_id, model }.",
+            "description": "Job accepted; poll status. When complete, result.verdict ∈ { APPROVED, CONDITIONAL_APPROVED, REJECTED, PIVOT_OUT }. PIVOT_OUT means a panelist self-declared the idea unsalvageable mid-debate (no final vote was taken); result.report.pivot_report holds the suggested new direction. APPROVED/CONDITIONAL_APPROVED → result.report.output is the execution roadmap, result.report.summary is the 1-page Lean Canvas. REJECTED (vote-driven) → result.report.output is a kill brief with top 3 reasons + salvage paths, result.report.summary is a 1-page decision brief.",
             "content": {
               "application/json": {
                 "schema": {

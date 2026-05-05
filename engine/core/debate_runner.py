@@ -972,7 +972,8 @@ async def _handle_pivot_out(state: DebateState, providers: Providers, source: st
     prompt = ctx.build_strategist_pivot_prompt(state, source, reason)
     resp = await providers.llm.call(
         prompt=prompt, model=providers.model,
-        system_prompt=personas.STRATEGIST_SYSTEM, max_tokens=4096,
+        system_prompt=personas.STRATEGIST_SYSTEM,
+        max_tokens=_max_tokens_for(providers.model, 4096),
     )
     state.consensus = "REJECTED"
     state.current_phase = "DONE"
@@ -1203,16 +1204,27 @@ async def run_debate(
         # occurrence's full wording in the output.
         all_conditions = _dedup_conditions(all_conditions, max_results=10)
 
-        # Map internal consensus to external verdict
-        verdict_map = {
-            "APPROVED": "APPROVED",
-            "CONDITIONAL_APPROVED": "CONDITIONAL_APPROVED",
-            "REJECTED": "REJECTED",
-            "CONTINUE": "CONDITIONAL_APPROVED",
-            "DEADLOCK": "CONDITIONAL_APPROVED",
-            "PENDING": "CONDITIONAL_APPROVED",
-        }
-        verdict = verdict_map.get(state.consensus, "CONDITIONAL_APPROVED")
+        # Map internal consensus to external verdict.
+        # When the panel pivoted (Proposer/Challenger/Defender self-declared
+        # PIVOT_OUT mid-round), _handle_pivot_out forces consensus=REJECTED but
+        # also populates pivot_report. Agents reading the API result deserve
+        # a distinct verdict string for that case — otherwise vote-rejected
+        # and pivoted ideas look identical in `result.verdict` and the agent
+        # has to inspect `result.report.pivot_report` to tell them apart.
+        # Frontend already does this rewrite (prove-report-client.tsx:425);
+        # we now do it engine-side so the agent API matches.
+        if pivot_report and pivot_report.strip():
+            verdict = "PIVOT_OUT"
+        else:
+            verdict_map = {
+                "APPROVED": "APPROVED",
+                "CONDITIONAL_APPROVED": "CONDITIONAL_APPROVED",
+                "REJECTED": "REJECTED",
+                "CONTINUE": "CONDITIONAL_APPROVED",
+                "DEADLOCK": "CONDITIONAL_APPROVED",
+                "PENDING": "CONDITIONAL_APPROVED",
+            }
+            verdict = verdict_map.get(state.consensus, "CONDITIONAL_APPROVED")
 
         # Build report payload
         report = {

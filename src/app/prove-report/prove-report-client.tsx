@@ -417,13 +417,14 @@ function ProveReportContent() {
     );
   }
 
-  // UI override: when the engine emitted a PIVOTED consensus it currently
-  // writes verdict=REJECTED but populates pivot_report. The actual votes are
-  // usually PROCEED-with-conditions, so REJECTED misleads. Treat presence of
-  // a non-empty pivot_report as PIVOT_OUT (engine-side fix tracked in todo
-  // #55; we'll switch this to read a real PIVOT_OUT verdict once that ships).
+  // The engine now emits verdict="PIVOT_OUT" directly when pivot_report is
+  // populated (debate_runner.py verdict_map). The pivot_report fallback is
+  // kept for sessions persisted before that engine change shipped — they
+  // store verdict="REJECTED" alongside a non-empty pivot_report.
   const hasPivotReport = !!session.report?.pivot_report?.trim();
-  const verdictKey = hasPivotReport ? "PIVOT_OUT" : (session.verdict || "CONDITIONAL_APPROVED");
+  const verdictKey = session.verdict === "PIVOT_OUT" || hasPivotReport
+    ? "PIVOT_OUT"
+    : (session.verdict || "CONDITIONAL_APPROVED");
   const vc = VERDICT_CONFIG[verdictKey] || VERDICT_CONFIG.CONDITIONAL_APPROVED;
   const voteSummary = session.report?.vote_summary || (session.votes as VoteSummary);
   const voteCounts = voteSummary?.vote_counts || {};

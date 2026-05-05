@@ -866,9 +866,12 @@ function ProveContent() {
                     const isEditing = editingLabel === session.id;
                     const date = new Date(session.created_at);
                     const statusColor = isComplete ? "oklch(0.55 0.16 155)" : isError ? "oklch(0.55 0.2 25)" : "oklch(0.72 0.14 85)";
-                    // Override REJECTED -> PIVOT_OUT when the engine emitted a pivot report
-                    // (matches the prove-report page UI; engine fix tracked separately).
-                    const effectiveVerdict = session.has_pivot ? "PIVOT_OUT" : session.verdict;
+                    // Engine now emits verdict="PIVOT_OUT" directly. The pivot_report
+                    // fallback (has_pivot) keeps old sessions (saved with verdict=REJECTED
+                    // alongside a populated pivot_report) badging correctly until they age out.
+                    const effectiveVerdict = session.verdict === "PIVOT_OUT" || session.has_pivot
+                      ? "PIVOT_OUT"
+                      : session.verdict;
                     const verdictColor =
                       effectiveVerdict === "APPROVED" ? "oklch(0.55 0.16 155)" :
                       effectiveVerdict === "REJECTED" ? "oklch(0.55 0.2 25)" :
