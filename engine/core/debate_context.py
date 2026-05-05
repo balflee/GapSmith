@@ -711,6 +711,87 @@ If worth pursuing, the following can be used directly as INPUT for a new debate:
 Return as markdown."""
 
 
+def build_strategist_rejected_prompt(state: DebateState) -> str:
+    """When the panel votes to reject (not via in-round PIVOT_OUT), we still
+    owe the agent a rationale + scrap-or-retry recommendation. The standard
+    Phase 2 prompt assumes APPROVED context (build execution plan), which is
+    nonsensical for a killed idea — this prompt produces a kill brief instead.
+    Output mirrors the APPROVED path's `---SUMMARY---` separator so the
+    downstream split logic stays unchanged."""
+    sc_block = ""
+    if state.session_config:
+        sc_block = f"""
+
+--- SESSION CONFIG (user's actual constraints — overrides defaults) ---
+{state.session_config}
+--- END SESSION CONFIG ---
+"""
+    return f"""Strategist — Kill Brief (Panel voted REJECTED)
+
+Session: {state.session_id}
+Status: REJECTED{sc_block}
+
+The 6-persona panel debated this idea across multiple rounds and voted to
+reject. The agent calling this API needs a clear, actionable rationale —
+not silence. Synthesize the discussion into a kill brief.
+
+--- ORIGINAL INPUT ---
+{state.idea}
+--- END INPUT ---
+
+--- FULL DISCUSSION ---
+{state.discussion}
+--- END DISCUSSION ---
+
+Generate TWO parts, separated by `---SUMMARY---`.
+
+## Part 1: OUTPUT (Full Kill Brief)
+
+### Why This Was Rejected
+- The 2-3 strongest objections raised (cite the persona + round)
+- Which core assumptions of the original idea broke down
+- Which evidence from the discussion was decisive
+
+### What Would Need to Be True for This to Work
+- Concrete falsifiable conditions that would change the verdict
+- For each: how would you test it cheaply (≤ 1 week / ≤ $1K)?
+
+### Salvage Paths (if any)
+- Adjacent ideas the discussion surfaced that look stronger
+- Specific narrowing of scope that would address the rejection
+- "Don't bother" call-out if no salvage exists — be direct
+
+### Lessons for Next Session
+- Patterns to watch for in similar future ideas
+- Research the proposer should do before starting again
+
+---SUMMARY---
+
+## Part 2: SUMMARY (1-Page Decision Brief)
+
+### 🛑 Verdict
+**REJECTED** — [one-sentence reason]
+
+### 🔑 Top 3 Reasons
+1. [reason — persona/round]
+2. [reason — persona/round]
+3. [reason — persona/round]
+
+### 🔄 Recommended Next Action
+- 🟢 Pivot to: [adjacent direction] — if [condition]
+- 🟡 Re-run with: [scope narrowing] — if [condition]
+- 🔴 Drop: [direct "don't pursue this" guidance]
+
+### 📋 If You Want to Try Again
+| Step | Goal | Timebox |
+|------|------|---------|
+| 1 | [validation step] | [days] |
+| 2 | [validation step] | [days] |
+| 3 | [decision check] | [days] |
+
+Return as markdown."""
+
+
 # ============================================================
 # Mini-Round (LOGIC_BLOCKED recovery)
 # ============================================================

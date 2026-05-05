@@ -34,6 +34,15 @@ from engine.core import validators as V
 MAX_ROUNDS = 3
 
 
+def _max_tokens_for(model: str | None, base: int) -> int:
+    """MiniMax-M2.7 emits a verbose preamble before its real answer, so a
+    base budget that's plenty for Claude/GPT/Gemini gets truncated mid-JSON.
+    Same fix as ideation_runner._max_tokens_for — keep them in sync."""
+    if model and "minimax" in model.lower():
+        return base * 2
+    return base
+
+
 _DEDUP_PUNCT_RE = re.compile(r"[^\w\s]+")
 _DEDUP_WS_RE = re.compile(r"\s+")
 
@@ -792,7 +801,8 @@ async def run_strategist(state: DebateState, providers: Providers) -> dict:
     p1_prompt = ctx.build_strategist_phase1_prompt(state, None)
     p1_resp = await providers.llm.call(
         prompt=p1_prompt, model=providers.model,
-        system_prompt=personas.STRATEGIST_SYSTEM, max_tokens=6144,
+        system_prompt=personas.STRATEGIST_SYSTEM,
+        max_tokens=_max_tokens_for(providers.model, 6144),
     )
     analysis = p1_resp.content
 
@@ -823,7 +833,8 @@ async def run_strategist(state: DebateState, providers: Providers) -> dict:
     p2_prompt = ctx.build_strategist_phase2_prompt(state, None, analysis)
     p2_resp = await providers.llm.call(
         prompt=p2_prompt, model=providers.model,
-        system_prompt=personas.STRATEGIST_SYSTEM, max_tokens=8192,
+        system_prompt=personas.STRATEGIST_SYSTEM,
+        max_tokens=_max_tokens_for(providers.model, 8192),
     )
     plan_output = p2_resp.content
 
@@ -841,6 +852,36 @@ async def run_strategist(state: DebateState, providers: Providers) -> dict:
         "summary": summary_md,
         "model": p2_resp.model,
         "logic_blocked": logic_blocked_payload,
+    }
+
+
+async def run_strategist_rejected(state: DebateState, providers: Providers) -> dict:
+    """Single-pass synthesis for vote-driven REJECTED. The 2-phase flow
+    (analysis → execution plan) makes no sense for a killed idea —
+    Phase 2 produces "build a roadmap for the thing we just rejected".
+    Instead emit a kill brief: rationale + salvage paths + 1-page decision
+    summary. Output format mirrors the APPROVED path so the split-on-
+    `---SUMMARY---` logic at the call site stays unchanged."""
+    state.current_phase = "STRATEGIST_REJECTED"
+    prompt = ctx.build_strategist_rejected_prompt(state)
+    resp = await providers.llm.call(
+        prompt=prompt, model=providers.model,
+        system_prompt=personas.STRATEGIST_SYSTEM,
+        max_tokens=_max_tokens_for(providers.model, 6144),
+    )
+    raw = resp.content
+    output_md = raw
+    summary_md = ""
+    if "---SUMMARY---" in raw:
+        idx = raw.find("---SUMMARY---")
+        output_md = raw[:idx].strip()
+        summary_md = raw[idx + len("---SUMMARY---"):].strip()
+    return {
+        "analysis": output_md,  # No separate phase-1 analysis on this path; reuse output as analysis
+        "output": output_md,
+        "summary": summary_md,
+        "model": resp.model,
+        "logic_blocked": None,
     }
 
 
@@ -1122,6 +1163,14 @@ async def run_debate(
                 strategist_result = await run_strategist(state, providers)
                 break
             elif consensus == "REJECTED":
+                # The panel voted to reject. Without this branch, output/summary/analysis
+                # ship empty and the agent (or UI) sees a verdict with no rationale —
+                # see prove run job_mosf3ahl_u7yjqmsl. The pivot path (#55) only fires
+                # when Proposer/Challenger/Defender self-declare PIVOT_OUT mid-round;
+                # vote-driven REJECTED still needs a Strategist synthesis pass — but
+                # using the kill-brief prompt, not the APPROVED execution-roadmap one.
+                await progress(f"Round {round_num}: REJECTED — Strategist synthesizing kill rationale...", 85)
+                strategist_result = await run_strategist_rejected(state, providers)
                 break
             # CONTINUE → next round
         else:

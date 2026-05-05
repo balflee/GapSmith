@@ -28,6 +28,17 @@ from typing import Any
 
 import base58
 import requests
+
+# Force UTF-8 stdout so we can print non-Latin characters (emoji in
+# Strategist kill briefs, etc.) on Windows where the default cp1252
+# codec raises UnicodeEncodeError. Python 3.7+ supports reconfigure;
+# guarded so it's a no-op on streams that don't (CI capture, redirects).
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from solders.transaction import Transaction
