@@ -129,7 +129,11 @@ async function handler(request: Request, ctx: X402RequestContext): Promise<Respo
     api_key: AGENT_LLM_KEY,
     provider: AGENT_LLM_PROVIDER,
     model: AGENT_LLM_MODEL,
-    session_config: body.session_config,
+    // Engine's RunForgeRequest expects session_config: str — we normalize the
+    // structured-object form to markdown earlier (see sessionConfigMarkdown above).
+    // Sending the raw body.session_config when it's an object would fail Pydantic
+    // validation with 422 Unprocessable Entity.
+    session_config: sessionConfigMarkdown,
     agent_job_id: ctx.jobId,
   };
 
