@@ -168,7 +168,9 @@ function buildContext(body: z.infer<typeof bodySchema>): string {
 
 export const POST = withX402Payment(handler, {
   description: "Run a full Forge brainstorm (5-round multi-agent ideation, ~30 min). Returns 202 + jobId for async polling.",
-  priceUsdcAtomic: BigInt(15_000_000), // 15 USDC
+  // TEMP: lowered from 15 USDC → 0.50 USDC for hackathon mainnet E2E testing.
+  // Revert to BigInt(15_000_000) before public launch.
+  priceUsdcAtomic: BigInt(500_000), // 0.50 USDC (TEMP — was 15 USDC)
   async: true,
   maxTimeoutSeconds: 60, // for 402 negotiation only — actual job runs ~30 min
   // Pre-payment body validation: agents posting an invalid body (wrong
