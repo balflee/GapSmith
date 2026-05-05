@@ -241,7 +241,7 @@ def demo_data_api(keypair: Keypair, network: str) -> None:
 
 def demo_compute_api(keypair: Keypair, network: str) -> None:
     """Trigger an async Forge brainstorm + poll until done."""
-    print("\n=== Compute API demo ===")
+    print("\n=== Compute API demo (Forge — 5-round ideation) ===")
     url = GAPSMITH_BASE + _add_network_param("/api/v1/forge/ideate", network)
     print(f"\nPOST {url}")
     body = {
@@ -277,6 +277,59 @@ def demo_compute_api(keypair: Keypair, network: str) -> None:
         if s["status"] == "completed":
             print(f"\n  [OK] DONE — top ideas: {len(s.get('result', {}).get('top_ideas', []))}")
             print(json.dumps(s["result"], indent=2)[:800])
+            return
+        if s["status"] == "failed":
+            print(f"  ✗ FAILED: {s.get('error', 'unknown')}")
+            return
+    print("  ✗ Polling timed out")
+
+
+def demo_prove_api(keypair: Keypair, network: str, idea: str | None = None) -> None:
+    """Trigger an async Prove debate + poll until done.
+
+    Same x402 flow as Forge but ~60 min instead of 30. Result payload
+    contains { verdict, report, rounds, votes } rather than top_ideas.
+    """
+    print("\n=== Compute API demo (Prove — 6-persona debate) ===")
+    url = GAPSMITH_BASE + _add_network_param("/api/v1/prove/debate", network)
+    print(f"\nPOST {url}")
+    body = {
+        "idea": idea or (
+            "AgentMeter — a cost governance and circuit-breaker SaaS that sits "
+            "between AI agents and LLM/SaaS APIs (OpenAI, Anthropic, Salesforce) "
+            "to enforce per-agent budgets, detect runaway loops in real time, "
+            "and attribute spend by task / agent / customer."
+        ),
+        # Same structured session_config schema as /forge/ideate.
+        "session_config": {
+            "profile": "Solo",
+            "budget": "$1K",
+            "timeline": "3-6 months",
+            "revenue_threshold": "$50K/year",
+        },
+    }
+    resp = x402_request("POST", url, keypair=keypair, network=network, json_body=body, timeout=60)
+    if resp.status_code != 202:
+        print(f"  ✗ unexpected status {resp.status_code} — {resp.text[:300]}")
+        return
+    job = resp.json()
+    print(f"  [OK] 202 jobId={job['jobId']} eta={job['etaMinutes']} min")
+    print(f"  -> polling {job['statusUrl']} every 60s...")
+
+    deadline = time.time() + 60 * (job["etaMinutes"] + 15)
+    while time.time() < deadline:
+        time.sleep(60)
+        s = requests.get(GAPSMITH_BASE + job["statusUrl"]).json()
+        print(f"  status={s['status']}  progress={s.get('progressPct', 0)}%")
+        if s["status"] == "completed":
+            result = s.get("result", {})
+            print(f"\n  [OK] DONE — verdict: {result.get('verdict', '?')}")
+            print(f"  rounds: {len(result.get('rounds', []))}, votes captured: {bool(result.get('votes'))}")
+            # Show summary preview
+            report = result.get("report", {}) or {}
+            summary = report.get("summary") or report.get("output", "")
+            print(f"  --- report preview ---")
+            print((summary or "(empty)")[:800])
             return
         if s["status"] == "failed":
             print(f"  ✗ FAILED: {s.get('error', 'unknown')}")
@@ -321,8 +374,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="GapSmith x402 agent demo")
     parser.add_argument("--mainnet", action="store_true", help="Use mainnet (default: devnet)")
     parser.add_argument("--secret-key", help="Base58 wallet secret. Defaults to AGENT_TEST_WALLET_SECRET in .env.local for devnet.")
-    parser.add_argument("--skip-compute", action="store_true", help="Skip the slow ~30 min Compute API demo")
+    parser.add_argument("--skip-data", action="store_true", help="Skip the 5 sub-dollar Data API calls")
+    parser.add_argument("--skip-compute", action="store_true", help="Skip both Compute API demos (Forge + Prove)")
+    parser.add_argument("--skip-forge", action="store_true", help="Skip just the Forge Compute call (~30 min)")
+    parser.add_argument("--skip-prove", action="store_true", help="Skip just the Prove Compute call (~60 min, default ON)", default=True)
+    parser.add_argument("--prove", action="store_true", help="Run the Prove Compute call (~60 min, costs ~0.50 USDC at hackathon pricing)")
+    parser.add_argument("--prove-idea", help="Idea text for Prove (default: a built-in AgentMeter example)")
     args = parser.parse_args()
+    # --prove flips off --skip-prove
+    if args.prove:
+        args.skip_prove = False
 
     # Devnet convenience: auto-load test wallet secret from .env.local if no flag given
     if not args.secret_key and not args.mainnet:
@@ -353,9 +414,12 @@ def main() -> None:
     if sol_lamports < 5_000_000:  # 0.005 SOL
         print("⚠  Warning: low SOL balance. Need ~0.001 SOL for gas + 0.002 if creating ATA.")
 
-    demo_data_api(keypair, network)
-    if not args.skip_compute:
+    if not args.skip_data:
+        demo_data_api(keypair, network)
+    if not args.skip_compute and not args.skip_forge:
         demo_compute_api(keypair, network)
+    if not args.skip_compute and not args.skip_prove:
+        demo_prove_api(keypair, network, idea=args.prove_idea)
 
 
 if __name__ == "__main__":
