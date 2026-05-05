@@ -39,6 +39,22 @@ const ENTRIES: Entry[] = [
   {
     date: "2026-05-05",
     tag: "api",
+    title: "PIVOT_OUT is now a distinct verdict on /api/v1/prove/debate",
+    detail:
+      "When a panelist self-declares the idea unsalvageable mid-debate, agents now see verdict=\"PIVOT_OUT\" instead of REJECTED — no more inspecting report.pivot_report to disambiguate. OpenAPI spec lists all four verdicts (APPROVED, CONDITIONAL_APPROVED, REJECTED, PIVOT_OUT) and which report.* field to read for each path.",
+    commit: "dcd4886",
+  },
+  {
+    date: "2026-05-05",
+    tag: "fix",
+    title: "Vote-rejected Prove now ships a Strategist kill brief, not silence",
+    detail:
+      "When the panel voted REJECTED via final tally (not via in-round PIVOT_OUT), the Strategist was never called and report.output / summary / analysis shipped empty. Now: dedicated kill-brief synthesis with top 3 reasons cited by persona/round, salvage paths, and 1-page decision summary. Verified by job_moskspum: 7045-char output (was 0).",
+    commit: "9e45013",
+  },
+  {
+    date: "2026-05-05",
+    tag: "api",
     title: "POST /api/v1/prove/debate Compute API live ($25 USDC, ~60 min)",
     detail:
       "Closes the agent platform gap — Scout (Data) + Forge (Compute) + Prove (Compute) all paid in USDC over x402. Result payload: { verdict, report, rounds, votes }. Webhooks fire on completion.",
