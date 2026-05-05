@@ -69,6 +69,7 @@ class RunProveRequest(BaseModel):
     provider: str
     model: str
     session_config: str = ""
+    agent_job_id: str | None = None    # Set when called via /api/v1/prove/debate (agent x402)
 
 
 # --- Webhook delivery (for x402 async jobs) ---
@@ -256,7 +257,13 @@ async def _run_forge_bg(req: RunForgeRequest):
 
 
 async def _run_prove_bg(req: RunProveRequest):
-    """Background: run Prove pipeline (multi-agent debate)."""
+    """Background: run Prove pipeline (multi-agent debate).
+
+    If req.agent_job_id is set, also mirrors progress + final verdict /
+    report to the agent_jobs table so /api/v1/jobs/{id} polling sees state,
+    and POSTs to webhook_url (if set) on completion.
+    """
+    print(f"[PROVE] session={req.session_id} provider={req.provider} model={req.model} agent_job={req.agent_job_id or '-'}", flush=True)
     providers = create_providers(
         api_key=req.api_key, provider=req.provider,
         model=req.model, user_id=req.user_id,
@@ -275,6 +282,12 @@ async def _run_prove_bg(req: RunProveRequest):
             )
         except Exception:
             pass
+        # Mirror to agent_jobs if this run came from x402
+        if req.agent_job_id:
+            try:
+                await providers.storage.update_agent_job_progress(req.agent_job_id, last_pct)
+            except Exception:
+                pass
 
     try:
         await run_debate(
@@ -284,6 +297,29 @@ async def _run_prove_bg(req: RunProveRequest):
             on_progress=on_progress,
             session_config=req.session_config,
         )
+
+        # Mirror final result to agent_jobs + fire webhook if x402-paid run.
+        # Prove rounds carry agent outputs (proposer/challenger/analyst/etc.) but
+        # NOT per-round cost/token fields (those live on prove_sessions row).
+        # So clean_rounds doesn't need stripping — pass through.
+        if req.agent_job_id:
+            try:
+                result = await providers.storage.load_state(req.session_id) or {}
+                agent_result = {
+                    "verdict": result.get("verdict", ""),
+                    "report": result.get("report", {}),
+                    "rounds": result.get("rounds", []) or [],
+                    "votes": result.get("votes", {}) or {},
+                    "session_id": req.session_id,
+                    "model": result.get("model", req.model),
+                }
+                row = await providers.storage.complete_agent_job(req.agent_job_id, agent_result)
+                webhook_url = (row or {}).get("webhook_url")
+                if webhook_url:
+                    await _deliver_webhook(webhook_url, req.agent_job_id, "completed", agent_result)
+            except Exception as e:
+                print(f"[PROVE AGENT_JOB] post-success update failed: {e}", flush=True)
+
     except Exception as e:
         print(f"[PROVE ERROR] {req.session_id}: {e}", flush=True)
         traceback.print_exc()
@@ -294,6 +330,14 @@ async def _run_prove_bg(req: RunProveRequest):
             await providers.storage.update_status("prove_sessions", req.session_id, "error")
         except Exception:
             pass
+        if req.agent_job_id:
+            try:
+                row = await providers.storage.fail_agent_job(req.agent_job_id, str(e))
+                webhook_url = (row or {}).get("webhook_url")
+                if webhook_url:
+                    await _deliver_webhook(webhook_url, req.agent_job_id, "failed", {"error": str(e)[:500]})
+            except Exception as e2:
+                print(f"[PROVE AGENT_JOB] post-fail update failed: {e2}", flush=True)
 
 
 # --- API endpoints ---

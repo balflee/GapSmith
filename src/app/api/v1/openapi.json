@@ -379,7 +379,73 @@
               }
             }
           },
-          "402": { "description": "Payment required (15 USDC)" }
+          "402": { "description": "Payment required (15 USDC)" },
+          "422": { "description": "Body failed validation (no payment burned)" }
+        }
+      }
+    },
+    "/api/v1/prove/debate": {
+      "post": {
+        "summary": "Run a Prove debate session (async)",
+        "description": "Triggers the 6-persona Prove pipeline (Proposer, Challenger, Analyst, Reviewer, Defender, Strategist) to stress-test a single idea across up to 3 rounds of search-augmented debate + final voting. Returns 202 + jobId immediately; pipeline runs ~60 min. Poll /api/v1/jobs/{jobId} for progress + result.",
+        "tags": ["Compute API"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["idea"],
+                "properties": {
+                  "idea": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 10000,
+                    "description": "The idea / product brief to debate. Multi-line markdown is fine — the Proposer reads this verbatim as the seed."
+                  },
+                  "session_config": {
+                    "description": "Optional SESSION_CONFIG (object preferred, string accepted). Same shape as /forge/ideate.",
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "profile": { "type": "string", "enum": ["Solo", "Small Team (2-3)", "Small Team (4-5)", "Funded Team (6-15)", "Enterprise"] },
+                          "budget": { "type": "string", "enum": ["$1K", "$5K", "$10K", "$25K", "$50K", "$100K+"] },
+                          "timeline": { "type": "string", "enum": ["2 weeks", "4 weeks", "4-8 weeks", "8-12 weeks", "3-6 months"] },
+                          "revenue_threshold": { "type": "string", "enum": ["$10K/year", "$50K/year", "$100K/year", "$500K/year", "$1M+/year"] },
+                          "founder_signal": { "type": "string", "maxLength": 2000 }
+                        }
+                      },
+                      { "type": "string", "maxLength": 5000 }
+                    ]
+                  },
+                  "webhook_url": { "type": "string", "format": "uri", "description": "Optional: POST result here when done" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job accepted; poll status. Result payload contains { verdict, report, rounds, votes, session_id, model }.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jobId": { "type": "string" },
+                    "status": { "type": "string", "enum": ["pending"] },
+                    "statusUrl": { "type": "string" },
+                    "etaMinutes": { "type": "integer", "example": 60 },
+                    "proveSessionId": { "type": "string", "format": "uuid" }
+                  }
+                }
+              }
+            }
+          },
+          "402": { "description": "Payment required (25 USDC)" },
+          "422": { "description": "Body failed validation (no payment burned)" }
         }
       }
     },

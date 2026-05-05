@@ -317,6 +317,7 @@ curl -i "https://gapsmith.draftlabs.org/api/v1/scout/gaps?sector=ai-ml"`}</CodeB
           </p>
           <div className="space-y-2">
             <EndpointRow method="POST" path="/api/v1/forge/ideate" price="15 USDC" description="Run a 5-round multi-agent brainstorm (~30 min)" />
+            <EndpointRow method="POST" path="/api/v1/prove/debate" price="25 USDC" description="Run a 6-persona adversarial debate against one idea (~60 min)" />
           </div>
 
           <h3 className="font-heading text-lg font-bold mt-8" style={{ color: FG }}>

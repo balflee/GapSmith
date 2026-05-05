@@ -36,6 +36,7 @@ Same intelligence, exposed at `/api/v1/*`, paid per-call in USDC over x402.
 | Data API | `GET /api/v1/scout/keywords` | $0.05 USDC | sync, cached |
 | Data API | `GET /api/v1/scout/brief` | $0.20 USDC | sync, cached (richest) |
 | Compute API | `POST /api/v1/forge/ideate` | $15 USDC | async (~30 min) |
+| Compute API | `POST /api/v1/prove/debate` | $25 USDC | async (~60 min) |
 | Discovery | `GET /api/v1/sectors` | free | lists sectors with cached data |
 | Jobs | `GET /api/v1/jobs/{jobId}` | free | poll async job status |
 
