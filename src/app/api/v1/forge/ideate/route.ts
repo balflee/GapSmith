@@ -13,6 +13,7 @@
  *   "sectors": ["ai-ml"],                      // optional
  *   "context": "...",                          // optional, free-form context for the brainstorm
  *   "product_modes": ["saas", "agent"],        // optional
+ *   "session_config": "Profile: Solo\nBudget: $1K\n...",  // optional, SESSION_CONFIG.md
  *   "webhook_url": "https://agent.com/cb"      // optional — POST result there when done
  * }
  *
@@ -34,6 +35,11 @@ const bodySchema = z.object({
   sectors: z.array(z.string().max(100)).max(10).optional().default([]),
   context: z.string().max(10000).optional().default(""),
   product_modes: z.array(z.string().max(100)).max(20).optional().default([]),
+  // SESSION_CONFIG.md the agent wants Forge to calibrate against — Profile,
+  // Budget, Timeline, Revenue_threshold, optional Founder Signal. Same format
+  // as the human-facing /forge UI emits via buildSessionConfig().
+  // Empty/omitted falls back to default Small Team / $10K / 4-8 weeks / $100K.
+  session_config: z.string().max(5000).optional().default(""),
   webhook_url: z.string().url().max(500).optional(),
 });
 
@@ -72,6 +78,7 @@ async function handler(request: Request, ctx: X402RequestContext): Promise<Respo
     .insert({
       user_id: AGENT_PSEUDO_USER,
       status: "pending",
+      session_config: body.session_config,
     })
     .select("id")
     .single();
@@ -100,6 +107,7 @@ async function handler(request: Request, ctx: X402RequestContext): Promise<Respo
     api_key: AGENT_LLM_KEY,
     provider: AGENT_LLM_PROVIDER,
     model: AGENT_LLM_MODEL,
+    session_config: body.session_config,
     agent_job_id: ctx.jobId,
   };
 

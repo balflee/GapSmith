@@ -308,6 +308,11 @@
                   "sectors": { "type": "array", "items": { "type": "string" } },
                   "context": { "type": "string", "maxLength": 10000 },
                   "product_modes": { "type": "array", "items": { "type": "string" } },
+                  "session_config": {
+                    "type": "string",
+                    "maxLength": 5000,
+                    "description": "Optional SESSION_CONFIG.md the engine calibrates against. Lines like `Profile: Solo`, `Budget: $1K`, `Timeline: 3-6 months`, `Revenue_threshold: $50K/year`. Empty falls back to default Small Team / $10K / 4-8 weeks / $100K."
+                  },
                   "webhook_url": { "type": "string", "format": "uri", "description": "Optional: POST result here when done" }
                 }
               }
