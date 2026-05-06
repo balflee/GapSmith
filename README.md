@@ -4,9 +4,44 @@
 
 GapSmith runs three multi-agent pipelines — **Scout** (market signal scanning), **Forge** (5-round idea brainstorming), **Prove** (multi-agent debate stress-testing) — and exposes that intelligence to other AI agents over standard HTTPS via the **x402 payment protocol**. Every API call settles in USDC on Solana mainnet in under 2 seconds. No API keys, no signups: the wallet is the identity.
 
-Live: https://gapsmith.draftlabs.org
-API docs: https://gapsmith.draftlabs.org/docs/api
-OpenAPI: https://gapsmith.draftlabs.org/api/v1/openapi
+- 🌐 Live: https://gapsmith.draftlabs.org
+- 📖 API docs: https://gapsmith.draftlabs.org/docs/api · [Playground](https://gapsmith.draftlabs.org/docs/api/playground)
+- 🧪 Lab: [Debate Room (WIP)](https://gapsmith.draftlabs.org/lab/debate-room) — visualize a real Prove session
+- 📰 [Changelog](https://gapsmith.draftlabs.org/changelog) — what shipped this week
+- 📜 OpenAPI: https://gapsmith.draftlabs.org/api/v1/openapi
+- 🎬 Pitch video: <!-- LINK_TO_EXISTING_PITCH_VIDEO --> _(linked from Colosseum submission)_
+
+> Submitted to **Solana Frontier Hackathon 2026** by Colosseum.
+
+---
+
+## Project context
+
+GapSmith is a project of **DraftLabs**, a small team. The project is currently led solo by the project lead, who is allocating time during a deliberate evaluation phase. The project lead converts to full-time and DraftLabs activates additional contributors on a clear traction signal — hackathon win or organic agent-API revenue. Capital-efficient by intention, with a concrete commitment trigger rather than vague over-promising.
+
+For team background and motivation, see the **pitch video** linked above (submitted with the Colosseum application).
+
+Contact: <!-- project-lead-email --> · GitHub: <!-- github-handle -->
+
+## Why this exists
+
+We've been validating SaaS ideas internally and keep hitting the same wall: getting an honest second opinion on whether an idea is worth building. Forums are noisy, friends are polite, AI assistants are sycophantic by training. So we built the panel of skeptics we wished we had — six adversarial AI personas (Proposer / Challenger / Analyst / Defender / Reviewer / Strategist) that pressure-test an idea across multiple search-augmented rounds and emit a verdict with concrete reasoning.
+
+Then we made it pay-per-call so other AI agents can use it too. That's the second reason: AI agents are starting to commission real research, and they need the same honest, auditable, on-chain-billable analysis humans get from consultants. GapSmith is what we'd deploy internally for our own venture decisions — making it public makes it sharper.
+
+## Where this goes (10-year vision)
+
+AI agents will commission research and validation the way humans commission consultants. GapSmith is the venture-decision layer of that economy — the place agents go to get honest, paid analysis before committing capital, and the place humans go to outsource the "is this worth my time" question with audit trails attached. By the time agentic commerce is mainstream, running a startup-validation debate without a panel like this should feel like running a software business without code review.
+
+## What's live today
+
+- **Mainnet** at [gapsmith.draftlabs.org](https://gapsmith.draftlabs.org) — Stripe + USDC payments via Phantom, all 3 pipelines callable
+- **3 paid pipelines** — Scout (data, $0.10–0.20/call, sync), Forge (compute, $15/call, ~35 min), Prove (compute, $25/call, ~60 min)
+- **x402 protocol on Solana** — production implementation with SPL transferChecked + memo binding for idempotency
+- **Public on-chain traction** — verifiable on the [merchant wallet](https://solscan.io/account/BuBjMDp2B9dPxFHjWU4qWZBQKKWkAXoiPts2GWGN9Rbv), shown live on the homepage hero
+- **80-line reference agent** — `examples/agent_demo.py` — ephemeral wallet, 402 → pay → resubmit, polls Compute jobs to completion
+- **Visual debate room** — [/lab/debate-room](https://gapsmith.draftlabs.org/lab/debate-room) — Microsoft-Teams-style replay of a real Prove session (mainnet, no payment to view)
+- **Active build log** — [/changelog](https://gapsmith.draftlabs.org/changelog) — daily ship notes during the hackathon review window
 
 ---
 
