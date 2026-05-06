@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import type { VARIANTS } from "@/lib/variants";
@@ -14,6 +14,14 @@ import { AnimatedShinyText } from "@/components/ui/animated-shiny-text";
 
 
 type Variant = (typeof VARIANTS)[number];
+
+// Optional slot for the homepage traction strip — passed in as a server-
+// rendered React node by app/page.tsx so the strip can read live data
+// without forcing this component server-side.
+interface LandingPageProps {
+  variant: Variant;
+  tractionSlot?: ReactNode;
+}
 
 /* ---------- Pipeline data ---------- */
 const PIPELINE_STAGES = [
@@ -106,7 +114,7 @@ function useScrollProgress() {
 }
 
 /* ========== MAIN COMPONENT ========== */
-export default function LandingPage({ variant }: { variant: Variant }) {
+export default function LandingPage({ variant, tractionSlot }: LandingPageProps) {
   const spotlightRef = useSpotlightSweep();
   const scrollProgress = useScrollProgress();
 
@@ -289,6 +297,12 @@ export default function LandingPage({ variant }: { variant: Variant }) {
           </BlurFade>
         </div>
       </section>
+
+      {/* Traction strip — server-rendered, lives between hero and pipeline cards.
+          Pulled in via the tractionSlot prop so app/page.tsx (server component)
+          can read on-chain numbers without making this whole client component
+          server-side. Falls through to nothing when slot not provided. */}
+      {tractionSlot}
 
       {/* ============ SOCIAL PROOF METRICS ============ */}
       <section className="relative" style={{ background: "oklch(0.96 0.015 75)", borderTop: "1px solid oklch(0.88 0.015 75)", borderBottom: "1px solid oklch(0.88 0.015 75)" }}>
