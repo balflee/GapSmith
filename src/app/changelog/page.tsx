@@ -37,6 +37,22 @@ interface Entry {
 
 const ENTRIES: Entry[] = [
   {
+    date: "2026-05-06",
+    tag: "feature",
+    title: "/lab/debate-room — visualized 6-persona Prove debate (WIP)",
+    detail:
+      "Microsoft-Teams-style chat replay of a real, paid mainnet Prove session. 6 AI personas with editorial-illustration avatars, phase progress (A → A.5 → B → C → D → vote), expandable sub-agent tool calls (Trend Scout / Benchmark Hunter / Evidence Hunter), verdict reveal with kill-brief banner. Read-only replay for now; mixed-model debates ship next.",
+    commit: "(staged)",
+  },
+  {
+    date: "2026-05-06",
+    tag: "feature",
+    title: "Live mainnet traction strip on homepage",
+    detail:
+      "Verifiable on-chain numbers beneath the hero — sessions count, USDC settled, paid agent API calls — with a Solscan link to the merchant wallet. Honest small numbers preferred over vanity metrics.",
+    commit: "(staged)",
+  },
+  {
     date: "2026-05-05",
     tag: "feature",
     title: "/docs/api/playground — interactive API explorer",

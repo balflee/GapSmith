@@ -13,6 +13,7 @@ const publicPaths = [
   "/docs/api",
   "/docs/api/playground",
   "/docs/done-for-you",
+  "/lab/debate-room",
   "/docs/quickstart",
   "/docs/architecture",
   "/docs/x402",

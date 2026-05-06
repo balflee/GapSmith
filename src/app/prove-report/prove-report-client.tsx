@@ -17,7 +17,9 @@ import { createClient } from "@/lib/supabase";
 import { trackProveComplete } from "@/lib/events";
 
 // --- Real agent definitions ---
-const AGENTS: Record<string, { name: string; icon: string; color: string }> = {
+// Exported so /lab/debate-room can reuse the same persona color/name map
+// without duplicating it. Keep this file as the canonical source.
+export const AGENTS: Record<string, { name: string; icon: string; color: string }> = {
   proposer: { name: "Proposer", icon: "P", color: "oklch(0.62 0.155 52)" },
   phase_a5_reviewer: { name: "Reviewer (Fact-Check)", icon: "R", color: "oklch(0.55 0.16 155)" },
   challenger: { name: "Challenger", icon: "C", color: "oklch(0.55 0.2 25)" },
@@ -33,7 +35,8 @@ const AGENTS: Record<string, { name: string; icon: string; color: string }> = {
 };
 
 // --- Types ---
-interface RoundData {
+// Exported for /lab/debate-room timeline transform and renderer.
+export interface RoundData {
   round: number;
   proposer: string;
   challenger: string;
@@ -52,13 +55,13 @@ interface RoundData {
   votes?: Record<string, { vote: string; reason?: string; conditions?: string[] }>;
 }
 
-interface VoteSummary {
+export interface VoteSummary {
   vote_counts: Record<string, number>;
   conditions: string[];
   total_voters: number;
 }
 
-interface ProveReport {
+export interface ProveReport {
   output: string; // Strategist Phase 2 execution plan (markdown)
   summary?: string; // Strategist Phase 2 summary (Lean Canvas + 7-day sprint)
   analysis?: string; // Strategist Phase 1 analysis (markdown)
@@ -69,7 +72,7 @@ interface ProveReport {
   pivot_report?: string | null;
 }
 
-interface ProveSessionData {
+export interface ProveSessionData {
   id: string;
   idea: string;
   rounds: RoundData[];
@@ -83,7 +86,8 @@ interface ProveSessionData {
 }
 
 // --- Verdict config ---
-const VERDICT_CONFIG: Record<string, { bg: string; text: string; glow: string; label: string; description: string }> = {
+// Exported for /lab/debate-room verdict reveal banner.
+export const VERDICT_CONFIG: Record<string, { bg: string; text: string; glow: string; label: string; description: string }> = {
   APPROVED: {
     bg: "oklch(0.55 0.16 155 / 12%)", text: "oklch(0.55 0.16 155)", glow: "oklch(0.65 0.16 155)",
     label: "APPROVED", description: "Strong consensus to move forward. The idea has validated market potential and feasible execution path.",
@@ -103,7 +107,9 @@ const VERDICT_CONFIG: Record<string, { bg: string; text: string; glow: string; l
 };
 
 // --- Markdown renderer ---
-function MarkdownContent({ content }: { content: string }) {
+// Exported so /lab/debate-room renders agent messages with the exact same
+// prose styling — keeps the two surfaces visually consistent.
+export function MarkdownContent({ content }: { content: string }) {
   return (
     <div className="prose-sm" style={{ color: "oklch(0.35 0.015 65)", lineHeight: "1.6" }}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={{

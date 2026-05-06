@@ -26,6 +26,7 @@ const COLS: Array<{ heading: string; links: Array<{ href: string; label: string;
       { href: "/docs/x402", label: "x402 on Solana", tag: "USP" },
       { href: "/docs/api", label: "Agent API" },
       { href: "/docs/done-for-you", label: "Done-For-You" },
+      { href: "/lab/debate-room", label: "Debate Room", tag: "WIP" },
     ],
   },
   {
