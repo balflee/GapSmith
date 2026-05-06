@@ -49,18 +49,19 @@ const SOLANA_GRADIENT = `linear-gradient(135deg, ${PATINA}, ${EMBER})`;
 // same agent, two distinct gates. Contrarian and Gap Finder don't have
 // dedicated avatars yet (they're sub-personas of B); they fall back to the
 // initial-circle treatment so they still render distinctively.
-// `-v2.png` suffix is a one-time URL change to defeat aggressive caching
-// (Next.js Image optimization, browser cache, dev-server in-memory cache)
-// after we regenerated the avatars from photorealistic portraits to
-// abstract web3-style geometric forms. Old URL was cached forever.
+// `-v2` suffix is a one-time URL change to defeat aggressive caching
+// after we regenerated avatars from photorealistic portraits to abstract
+// web3-style geometric forms. Files are 256×256 webp (~3 KB each)
+// produced by scripts/optimize-lab-avatars.mjs from the original 1024px
+// fal.ai PNGs — chat displays them at 32px so 256 covers up to 4x retina.
 const AVATAR_FOR: Record<string, string> = {
-  proposer: "/lab/avatars/proposer-v2.png",
-  challenger: "/lab/avatars/challenger-v2.png",
-  analyst: "/lab/avatars/analyst-v2.png",
-  defender: "/lab/avatars/defender-v2.png",
-  phase_a5_reviewer: "/lab/avatars/reviewer-v2.png",
-  reviewer: "/lab/avatars/reviewer-v2.png",
-  strategist: "/lab/avatars/strategist-v2.png",
+  proposer: "/lab/avatars/proposer-v2.webp",
+  challenger: "/lab/avatars/challenger-v2.webp",
+  analyst: "/lab/avatars/analyst-v2.webp",
+  defender: "/lab/avatars/defender-v2.webp",
+  phase_a5_reviewer: "/lab/avatars/reviewer-v2.webp",
+  reviewer: "/lab/avatars/reviewer-v2.webp",
+  strategist: "/lab/avatars/strategist-v2.webp",
 };
 
 // Sub-agent tool-call icons (no portrait — these are agent tools, not
@@ -520,10 +521,10 @@ function VerdictBanner({ event }: { event: Extract<TimelineEvent, { kind: "verdi
         {/* Banner illustration */}
         <div className="mb-5 overflow-hidden rounded-xl" style={{ boxShadow: `inset 0 0 0 1px ${BORDER}` }}>
           <Image
-            src="/lab/avatars/verdict-banner-v2.png"
+            src="/lab/avatars/verdict-banner-v2.webp"
             alt="Scales — verdict illustration"
-            width={1792}
-            height={1024}
+            width={1280}
+            height={720}
             className="h-28 w-full object-cover sm:h-36"
           />
         </div>
