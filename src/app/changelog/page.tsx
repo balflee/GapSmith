@@ -37,12 +37,36 @@ interface Entry {
 
 const ENTRIES: Entry[] = [
   {
+    date: "2026-05-07",
+    tag: "fix",
+    title: "Upstream LLM 5xx no longer eats your run quota",
+    detail:
+      "When the AI model provider (Gemini, Anthropic, MiniMax, etc.) returns a 503/429/connection error mid-pipeline, the engine now classifies it, refunds the quota unit you spent at /start, and surfaces a green \"Your run quota was NOT used — retry anytime\" badge in the run-page error card. Run failures from upstream outages cost you nothing. UI also recognizes 503 / \"service unavailable\" / connection errors directly (was generic \"Something Went Wrong\" before).",
+    commit: "aacf908",
+  },
+  {
+    date: "2026-05-07",
+    tag: "fix",
+    title: "Prove no longer false-rejects ADJUSTED debates",
+    detail:
+      "PIVOT_OUT detection moved from regex to a mandatory YAML verdict block (status: STRENGTHENED | ADJUSTED | VULNERABLE | PIVOT_OUT) the agent must emit. Three rounds of regex tightening upstream still couldn't handle every false-positive variant — a Defender stats-table row \"| 🔴 PIVOT_OUT | 0 |\" reporting zero pivots was triggering REJECTED on debates that were actually ADJUSTED. Verified end-to-end on MiniMax-M2.7 ($0.022 smoke).",
+    commit: "3e41c59",
+  },
+  {
+    date: "2026-05-07",
+    tag: "feature",
+    title: "Forge gets a fourth competitive category: RECONSTRUCT",
+    detail:
+      "Forge ideation Step 3 used a 3-category schema (BLUE_OCEAN / IMPROVABLE / RED_OCEAN) and Step 4 told Proposer to skip RED_OCEAN — which means Notion (vs Confluence), Linear (vs Jira), Stripe (vs PayPal) class opportunities were systematically filtered out. New RECONSTRUCT category surfaces ideas where the incumbent looks healthy but the Job-To-Be-Done has shifted underneath. Plus a \"why hasn't anyone done this?\" sanity gate on BLUE_OCEAN to catch survivor-bias wedges before debate kills them.",
+    commit: "ce017ab",
+  },
+  {
     date: "2026-05-06",
     tag: "feature",
     title: "/lab/debate-room — visualized 6-persona Prove debate (WIP)",
     detail:
       "Microsoft-Teams-style chat replay of a real, paid mainnet Prove session. 6 AI personas with editorial-illustration avatars, phase progress (A → A.5 → B → C → D → vote), expandable sub-agent tool calls (Trend Scout / Benchmark Hunter / Evidence Hunter), verdict reveal with kill-brief banner. Read-only replay for now; mixed-model debates ship next.",
-    commit: "(staged)",
+    commit: "37a63fd",
   },
   {
     date: "2026-05-06",
@@ -50,7 +74,7 @@ const ENTRIES: Entry[] = [
     title: "Live mainnet traction strip on homepage",
     detail:
       "Verifiable on-chain numbers beneath the hero — sessions count, USDC settled, paid agent API calls — with a Solscan link to the merchant wallet. Honest small numbers preferred over vanity metrics.",
-    commit: "(staged)",
+    commit: "c7186aa",
   },
   {
     date: "2026-05-05",
@@ -58,7 +82,7 @@ const ENTRIES: Entry[] = [
     title: "/docs/api/playground — interactive API explorer",
     detail:
       "Pick any of the 7 endpoints, tweak query/body params via a form, and copy a runnable curl / Python / TypeScript snippet. Sample-response tab shows real production payloads (gaps, pain clusters, kill briefs) so judges and integrators can see actual output shapes without spending USDC.",
-    commit: "(staged)",
+    commit: "c6b5d84",
   },
   {
     date: "2026-05-05",
