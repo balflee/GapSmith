@@ -138,6 +138,69 @@
   },
   "security": [{ "x402": [] }],
   "paths": {
+    "/api/v1/health": {
+      "get": {
+        "summary": "System health check (free)",
+        "description": "Probe LLM + search backend health BEFORE paying for a Compute API call. Free — no x402 required. Recommended pattern: agents call this first; if 503, wait for Retry-After before posting a Forge/Prove request, since the same preflight runs server-side and would reject the 402 advertisement anyway.",
+        "tags": ["Health"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Healthy — safe to call paid Compute endpoints.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean", "example": true },
+                    "llm": {
+                      "type": "object",
+                      "properties": {
+                        "ok": { "type": "boolean" },
+                        "latency_ms": { "type": "integer" },
+                        "error": { "type": "string", "nullable": true }
+                      }
+                    },
+                    "search": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "ok": { "type": "boolean" },
+                        "error": { "type": "string", "nullable": true }
+                      }
+                    },
+                    "server_time": { "type": "string", "format": "date-time" }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unhealthy — Compute API endpoints will reject 402 advertisements until system recovers. Includes Retry-After header.",
+            "headers": {
+              "Retry-After": {
+                "schema": { "type": "integer" },
+                "description": "Seconds to wait before retrying. 30 for transient upstream issues; 600 for config errors that need operator intervention."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean", "example": false },
+                    "errorClass": { "type": "string", "enum": ["upstream", "config"], "description": "upstream = retry later; config = operator must fix (don't retry)" },
+                    "llm": { "type": "object" },
+                    "search": { "type": "object", "nullable": true },
+                    "server_time": { "type": "string", "format": "date-time" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/scout/gaps": {
       "get": {
         "summary": "Market gap intelligence",
@@ -380,7 +443,8 @@
             }
           },
           "402": { "description": "Payment required (15 USDC)" },
-          "422": { "description": "Body failed validation (no payment burned)" }
+          "422": { "description": "Body failed validation (no payment burned)" },
+          "503": { "description": "Upstream LLM or search backend currently unhealthy. Server preflight refused to advertise 402 — agent did NOT pay. Includes Retry-After header. Hit GET /api/v1/health to check readiness before retrying." }
         }
       }
     },
@@ -445,7 +509,8 @@
             }
           },
           "402": { "description": "Payment required (25 USDC)" },
-          "422": { "description": "Body failed validation (no payment burned)" }
+          "422": { "description": "Body failed validation (no payment burned)" },
+          "503": { "description": "Upstream LLM or search backend currently unhealthy. Server preflight refused to advertise 402 — agent did NOT pay. Includes Retry-After header. Hit GET /api/v1/health to check readiness before retrying." }
         }
       }
     },

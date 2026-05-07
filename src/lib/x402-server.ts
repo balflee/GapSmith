@@ -71,6 +71,13 @@ export type ValidateBodyResult =
   | { ok: true; body: unknown }
   | { ok: false; errors: unknown };
 
+/** Result returned by an X402WrapperConfig.preflight function.
+ *  ok=false → wrapper returns 503 instead of advertising 402, so the
+ *  agent never pays. retryAfterSeconds is surfaced via Retry-After header. */
+export type PreflightResult =
+  | { ok: true }
+  | { ok: false; reason: string; errorClass?: "upstream" | "config"; retryAfterSeconds?: number };
+
 export interface X402WrapperConfig {
   /** Human-readable description of the resource being sold (shown in 402 body). */
   description: string;
@@ -100,6 +107,21 @@ export interface X402WrapperConfig {
    * handler doesn't re-parse.
    */
   validateBody?: (rawBody: unknown) => ValidateBodyResult | Promise<ValidateBodyResult>;
+  /**
+   * Optional system-health preflight, run BEFORE the 402 payment
+   * advertisement on Compute API endpoints (Forge ideate, Prove debate).
+   * If preflight returns ok=false, the wrapper returns 503 + Retry-After
+   * INSTEAD of advertising 402 — the agent doesn't see "Payment Required"
+   * so doesn't sign + broadcast the USDC tx, saving them money on a job
+   * we can't currently fulfill (Gemini 503, MiniMax 529, etc.).
+   *
+   * Cheap operation (~$0.0001 for a 1-token LLM ping). The Next.js
+   * caller is expected to cache results — see src/lib/x402-preflight.ts.
+   *
+   * Skip on Data API endpoints (Scout gaps, pain-clusters, etc.) — those
+   * are pure DB reads, don't depend on LLM/search health.
+   */
+  preflight?: () => Promise<PreflightResult>;
 }
 
 const SOLANA_NETWORK_LABEL: Record<SolanaNetwork, "solana" | "solana-devnet"> = {
@@ -251,8 +273,38 @@ export function withX402Payment(
       validatedBody = result.body;
     }
 
-    // No payment → return 402 with requirements
+    // No payment → run preflight (if configured) BEFORE advertising 402.
+    // The point: if our upstream is currently down (Gemini 503, MiniMax 529,
+    // Anthropic Overloaded), refuse to advertise the price so the agent
+    // doesn't sign + broadcast a USDC tx for a job we can't fulfill.
+    // Manual on-chain refunds are operationally heavy; preventing the bad
+    // settlement in the first place is far cheaper.
     if (!payment) {
+      if (config.preflight) {
+        const pf = await config.preflight();
+        if (!pf.ok) {
+          const retryAfter = pf.retryAfterSeconds ?? 30;
+          return NextResponse.json(
+            {
+              error: "System temporarily unable to fulfill this request",
+              reason: pf.reason,
+              errorClass: pf.errorClass ?? "upstream",
+              retryAfterSeconds: retryAfter,
+              hint: pf.errorClass === "config"
+                ? "The endpoint operator's configuration is incorrect (likely a bad API key on their side). This is not your problem to fix; check the operator's status page."
+                : "The upstream AI provider is temporarily unavailable. No payment was requested — your funds are untouched. Retry after the indicated wait.",
+            },
+            {
+              status: 503,
+              headers: {
+                "Retry-After": String(retryAfter),
+                "x-x402-preflight": "failed",
+              },
+            },
+          );
+        }
+      }
+
       const requirements = await buildPaymentRequirements(config, resourceUrl, requestedNetwork);
       return NextResponse.json(
         {

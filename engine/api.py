@@ -473,6 +473,112 @@ async def health():
     return {"status": "ok", "engine": "gapsmith", "version": "0.2.0", "tavily": tavily}
 
 
+# --- Deep health check: live LLM + Tavily ping ---
+#
+# Used by the Next.js x402 layer for preflight checks before advertising
+# 402 Payment Required on Compute API endpoints (Forge ideate, Prove
+# debate). The point is to refuse to take the agent's USDC if our
+# upstream is down — a 1-token LLM call (~$0.0001) is much cheaper than
+# a $15 USDC settlement on a job we can't fulfill.
+#
+# Caller responsibilities:
+#   - Cache the result for 30s (short, but long enough that a single
+#     agent's 402 → settle round-trip won't trigger two pings)
+#   - Treat `ok=false` as "do not advertise 402; return 503 + Retry-After"
+#
+# This endpoint costs the operator a tiny amount per call (~$0.0001 for
+# the LLM ping). Cache aggressively at the caller layer.
+
+class HealthCheckRequest(BaseModel):
+    provider: str
+    model: str
+    api_key: str
+    check_search: bool = True  # set False if endpoint doesn't need search (Scout Data API)
+
+
+@app.post("/api/engine/health/llm")
+async def health_llm(req: HealthCheckRequest):
+    """1-token LLM ping + optional Tavily ping. Returns structured ok/error."""
+    import time as _time
+    from engine.adapters.litellm_provider import LiteLLMProvider
+
+    result = {
+        "ok": False,
+        "llm_ok": False,
+        "search_ok": None,        # None when not checked
+        "llm_latency_ms": 0,
+        "search_latency_ms": 0,
+        "error": None,
+    }
+
+    if not req.api_key:
+        result["error"] = "missing api_key"
+        return result
+
+    # LLM ping: minimal call to verify the provider is reachable + key valid.
+    #
+    # max_tokens picked at 128 because MiniMax-M2.7 (the AGENT_LLM_MODEL we
+    # ship with) emits a verbose chain-of-thought preamble before its real
+    # answer. Earlier drafts used 4/16/32 — all triggered LiteLLMProvider's
+    # adaptive doubling (length-finish-reason → retry with 2x), turning
+    # each preflight into a 2-3 call round-trip (~6-9s real-world).
+    # At 128 a single round-trip is enough on every model we've tested.
+    # Cost is still under $0.001 per ping, cached 30s.
+    try:
+        llm = LiteLLMProvider(api_key=req.api_key, provider=req.provider, default_model=req.model)
+        t0 = _time.monotonic()
+        resp = await llm.call(
+            prompt="Reply with the single word: ok",
+            model=req.model,
+            max_tokens=128,
+        )
+        result["llm_latency_ms"] = int((_time.monotonic() - t0) * 1000)
+        if resp and resp.content:
+            result["llm_ok"] = True
+        else:
+            result["error"] = "empty LLM response"
+    except Exception as e:
+        # Use the same upstream-error classifier so the caller can
+        # distinguish "provider 5xx" from "your key is bad" — agents
+        # should retry on the former and fix config on the latter.
+        is_upstream = _is_upstream_error(e)
+        result["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+        result["error_class"] = "upstream" if is_upstream else "config"
+        # Don't bother checking search if LLM is down — return early
+        return result
+
+    # Tavily ping: only if requested AND configured. Failure here is
+    # non-fatal (engine swallows Tavily errors mid-pipeline anyway, see
+    # debate_helpers.py:166), but agents may want to know if their
+    # report will lack inline citations.
+    if req.check_search:
+        tavily_key = os.environ.get("TAVILY_API_KEY")
+        if not tavily_key:
+            result["search_ok"] = False
+            result["error"] = (result.get("error") or "") + " · search not configured"
+        else:
+            try:
+                from engine.adapters.tavily_search import TavilySearch
+                search = TavilySearch(api_key=tavily_key)
+                t1 = _time.monotonic()
+                # Tiny query — Tavily charges per-search but minimal-spend cap
+                # is well within a daily preflight budget.
+                _ = await search.search("ping", num_results=1)
+                result["search_latency_ms"] = int((_time.monotonic() - t1) * 1000)
+                result["search_ok"] = True
+            except Exception as e:
+                result["search_ok"] = False
+                # Search failure does NOT fail the overall preflight — the
+                # engine degrades gracefully without search. Surface it but
+                # don't block the agent's run. The caller decides whether
+                # to require search_ok or not.
+                result["search_error"] = f"{type(e).__name__}: {str(e)[:100]}"
+
+    # Overall ok: LLM must be up. Search is best-effort.
+    result["ok"] = result["llm_ok"]
+    return result
+
+
 # --- Test endpoints (no LLM calls, zero cost) ---
 
 @app.get("/api/engine/test/scout")

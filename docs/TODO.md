@@ -6,12 +6,35 @@ so future-us doesn't re-debate them.
 
 ---
 
-## D — Agent API x402: preflight system-health check before settling payment
+## ~~D — Agent API x402: preflight system-health check before settling payment~~ ✅ Shipped 2026-05-07
 
-**Priority:** Medium — only matters once Agent API has real users / hackathon judges run it
+**Priority:** ~~Medium~~ — Done
 **Origin:** 2026-05-07 thread that produced commits `7e8755c` (engine refund) +
 `aacf908` (UI surface)
-**Status:** Designed, not implemented
+**Status:** **Shipped.** The "do not advertise 402 if upstream is down"
+design from below was implemented in a follow-up commit:
+
+- `engine/api.py` — `/api/engine/health/llm` endpoint (1-token LLM ping
+  + Tavily ping, with `error_class: upstream | config` classification)
+- `src/lib/x402-preflight.ts` — Next.js helper with 30s in-memory TTL cache
+- `src/lib/x402-server.ts` — `withX402Payment` runs `config.preflight()`
+  BEFORE advertising 402; on `ok=false`, returns 503 + `Retry-After` so
+  the agent never sees a price and never signs a USDC tx for a job we
+  can't fulfill
+- `src/app/api/v1/forge/ideate/route.ts` + `prove/debate/route.ts` —
+  both wired to `runPreflight()` with `checkSearch: true`
+- `src/app/api/v1/health/route.ts` — public free endpoint agents can
+  probe before paying (same shape as internal preflight)
+- `src/app/api/v1/openapi.json` — `/api/v1/health` documented +
+  503 response added to Forge/Prove paid endpoints
+
+The original concern (we said we'd punt because of refund tx complexity)
+was resolved by reframing: instead of "settle then refund on failure",
+it's "refuse to advertise the price if we can't deliver". x402 spec
+already lets the server return 503 from the 402-probe endpoint without
+ever issuing payment requirements.
+
+### Original design notes (kept for future iteration)
 
 ### Why preflight, not after-the-fact refund
 

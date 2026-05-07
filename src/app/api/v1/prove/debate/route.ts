@@ -33,6 +33,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withX402Payment, type X402RequestContext } from "@/lib/x402-server";
+import { runPreflight } from "@/lib/x402-preflight";
 import { createServiceRoleClient } from "@/lib/supabase-server";
 import {
   SESSION_CONFIG_PROFILES,
@@ -164,5 +165,26 @@ export const POST = withX402Payment(handler, {
     return r.success
       ? { ok: true, body: r.data }
       : { ok: false, errors: r.error.flatten() };
+  },
+  // System-health preflight — see forge/ideate/route.ts for rationale.
+  // Refuses to advertise 402 if MiniMax (server-side LLM) is down,
+  // saving the agent a $25 USDC bad settlement.
+  preflight: async () => {
+    if (!AGENT_LLM_KEY) {
+      return { ok: false, reason: "AGENT_LLM_KEY not configured", errorClass: "config", retryAfterSeconds: 600 };
+    }
+    const r = await runPreflight({
+      provider: AGENT_LLM_PROVIDER,
+      model: AGENT_LLM_MODEL,
+      apiKey: AGENT_LLM_KEY,
+      checkSearch: true, // Prove's Challenger / Defender / sub-agents all rely on Tavily
+    });
+    if (r.ok) return { ok: true };
+    return {
+      ok: false,
+      reason: r.error ?? "preflight failed",
+      errorClass: r.errorClass,
+      retryAfterSeconds: r.errorClass === "config" ? 600 : 30,
+    };
   },
 });
