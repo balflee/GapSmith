@@ -231,16 +231,39 @@ function GuidedField({ id, label, placeholder, value, onChange, hint, rows = 2 }
 }
 
 // --- Error message formatting ---
+//
+// The engine writes failure detail into forge_sessions.progress_message.
+// On a classified-upstream failure that triggered a quota refund, the
+// engine appends the sentinel `[quota_refunded]` to that string (see
+// engine/api.py QUOTA_REFUNDED_MARKER). We strip it here so the title /
+// message stays clean, then surface it as a separate green sub-line
+// near the retry buttons.
+const QUOTA_REFUNDED_MARKER = "[quota_refunded]";
+
+function wasQuotaRefunded(error: string): boolean {
+  return error.includes(QUOTA_REFUNDED_MARKER);
+}
+
+function stripQuotaMarker(error: string): string {
+  return error.replace(QUOTA_REFUNDED_MARKER, "").trim();
+}
+
 function formatErrorTitle(error: string): string {
-  const lower = error.toLowerCase();
+  const lower = stripQuotaMarker(error).toLowerCase();
   if (lower.includes("overload") || lower.includes("high load") || lower.includes("529")) {
     return "AI Model Temporarily Overloaded";
   }
-  if (lower.includes("rate") || lower.includes("429") || lower.includes("quota")) {
+  if (lower.includes("503") || lower.includes("service unavailable") || lower.includes("unavailable")) {
+    return "AI Provider Temporarily Down";
+  }
+  if (lower.includes("rate") || lower.includes("429") || lower.includes("too many requests") || lower.includes("quota")) {
     return "Rate Limit Reached";
   }
   if (lower.includes("timeout") || lower.includes("timed out")) {
     return "Request Timed Out";
+  }
+  if (lower.includes("connection") || lower.includes("network")) {
+    return "Network Connection Issue";
   }
   if (lower.includes("api key") || lower.includes("unauthorized") || lower.includes("401")) {
     return "API Key Issue";
@@ -249,22 +272,29 @@ function formatErrorTitle(error: string): string {
 }
 
 function formatErrorMessage(error: string): string {
-  const lower = error.toLowerCase();
+  const cleaned = stripQuotaMarker(error);
+  const lower = cleaned.toLowerCase();
   if (lower.includes("overload") || lower.includes("high load") || lower.includes("529")) {
     return "The AI model provider is experiencing high traffic. This is temporary — please wait a few minutes and try again.";
   }
-  if (lower.includes("rate") || lower.includes("429") || lower.includes("quota")) {
+  if (lower.includes("503") || lower.includes("service unavailable") || lower.includes("unavailable")) {
+    return "The AI model provider's API is currently unavailable. This is on their end, not yours — try again in a few minutes, or switch to a different model in Settings.";
+  }
+  if (lower.includes("rate") || lower.includes("429") || lower.includes("too many requests") || lower.includes("quota")) {
     return "You've hit the API rate limit. Please wait a moment before trying again, or consider switching to a different model.";
   }
   if (lower.includes("timeout") || lower.includes("timed out")) {
     return "The request took too long to complete. This can happen with complex contexts. Try again or simplify your input.";
   }
+  if (lower.includes("connection") || lower.includes("network")) {
+    return "Could not reach the AI provider. Check your internet connection or try again in a moment.";
+  }
   if (lower.includes("api key") || lower.includes("unauthorized") || lower.includes("401")) {
     return "Your API key may be invalid or expired. Check your Settings page and update your key.";
   }
   // For unknown errors, show a cleaned up version
-  const cleaned = error.replace(/^Error:\s*/i, "").replace(/litellm\.\w+:\s*/gi, "").substring(0, 200);
-  return cleaned || "An unexpected error occurred. Please try again.";
+  const trimmed = cleaned.replace(/^Error:\s*/i, "").replace(/litellm\.\w+:\s*/gi, "").substring(0, 200);
+  return trimmed || "An unexpected error occurred. Please try again.";
 }
 
 // --- Product modes (matches CLI venture-ideate) ---
@@ -1343,6 +1373,18 @@ function ForgeContent() {
               <div className="text-sm mb-4" style={{ color: "oklch(0.45 0.02 65)", lineHeight: "1.55" }}>
                 {formatErrorMessage(error)}
               </div>
+              {wasQuotaRefunded(error) && (
+                <div
+                  className="text-xs mb-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full"
+                  style={{
+                    backgroundColor: "oklch(0.95 0.05 145)",
+                    color: "oklch(0.40 0.13 145)",
+                    border: "1px solid oklch(0.85 0.08 145)",
+                  }}
+                >
+                  ✓ Your Forge run quota was NOT used — retry anytime.
+                </div>
+              )}
               <div className="flex items-center justify-center gap-3">
                 <Button onClick={() => { setError(null); setRounds([]); setCurrentRound(0); setProgress(0); }} variant="outline" size="sm" style={{ borderRadius: "9999px" }}>
                   Start Over

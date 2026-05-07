@@ -186,21 +186,42 @@ function RoundCard({ data, index, isStreaming }: { data: RoundData; index: numbe
 }
 
 // --- Error formatting ---
+//
+// The engine writes failure detail into prove_sessions.progress_message.
+// On a classified-upstream failure that triggered a quota refund, the
+// engine appends `[quota_refunded]` (see engine/api.py
+// QUOTA_REFUNDED_MARKER). We strip it here and surface it as a separate
+// green sub-line in the error card.
+const QUOTA_REFUNDED_MARKER = "[quota_refunded]";
+
+function wasQuotaRefunded(error: string): boolean {
+  return error.includes(QUOTA_REFUNDED_MARKER);
+}
+
+function stripQuotaMarker(error: string): string {
+  return error.replace(QUOTA_REFUNDED_MARKER, "").trim();
+}
+
 function formatErrorTitle(error: string): string {
-  const lower = error.toLowerCase();
+  const lower = stripQuotaMarker(error).toLowerCase();
   if (lower.includes("overload") || lower.includes("529")) return "AI Model Temporarily Overloaded";
-  if (lower.includes("rate") || lower.includes("429")) return "Rate Limit Reached";
-  if (lower.includes("timeout")) return "Request Timed Out";
+  if (lower.includes("503") || lower.includes("service unavailable") || lower.includes("unavailable")) return "AI Provider Temporarily Down";
+  if (lower.includes("rate") || lower.includes("429") || lower.includes("too many requests")) return "Rate Limit Reached";
+  if (lower.includes("timeout") || lower.includes("timed out")) return "Request Timed Out";
+  if (lower.includes("connection") || lower.includes("network")) return "Network Connection Issue";
   if (lower.includes("api key") || lower.includes("401")) return "API Key Issue";
   return "Something Went Wrong";
 }
 function formatErrorMessage(error: string): string {
-  const lower = error.toLowerCase();
+  const cleaned = stripQuotaMarker(error);
+  const lower = cleaned.toLowerCase();
   if (lower.includes("overload") || lower.includes("529")) return "The AI model provider is experiencing high traffic. Please wait a few minutes and try again.";
-  if (lower.includes("rate") || lower.includes("429")) return "You've hit the API rate limit. Please wait or switch to a different model.";
-  if (lower.includes("timeout")) return "The request took too long. Try again or simplify your input.";
+  if (lower.includes("503") || lower.includes("service unavailable") || lower.includes("unavailable")) return "The AI model provider's API is currently unavailable. This is on their end, not yours — try again in a few minutes, or switch to a different model in Settings.";
+  if (lower.includes("rate") || lower.includes("429") || lower.includes("too many requests")) return "You've hit the API rate limit. Please wait or switch to a different model.";
+  if (lower.includes("timeout") || lower.includes("timed out")) return "The request took too long. Try again or simplify your input.";
+  if (lower.includes("connection") || lower.includes("network")) return "Could not reach the AI provider. Check your internet connection or try again in a moment.";
   if (lower.includes("api key") || lower.includes("401")) return "Your API key may be invalid or expired. Check your Settings page.";
-  return error.replace(/^Error:\s*/i, "").substring(0, 200) || "An unexpected error occurred. Please try again.";
+  return cleaned.replace(/^Error:\s*/i, "").substring(0, 200) || "An unexpected error occurred. Please try again.";
 }
 
 // --- Main ---
@@ -967,6 +988,18 @@ function ProveContent() {
             <CardContent className="py-8 text-center">
               <div className="text-sm font-medium mb-2" style={{ color: "oklch(0.55 0.2 25)" }}>{formatErrorTitle(error)}</div>
               <div className="text-sm mb-4" style={{ color: "oklch(0.45 0.02 65)", lineHeight: "1.55" }}>{formatErrorMessage(error)}</div>
+              {wasQuotaRefunded(error) && (
+                <div
+                  className="text-xs mb-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full"
+                  style={{
+                    backgroundColor: "oklch(0.95 0.05 145)",
+                    color: "oklch(0.40 0.13 145)",
+                    border: "1px solid oklch(0.85 0.08 145)",
+                  }}
+                >
+                  ✓ Your Prove run quota was NOT used — retry anytime.
+                </div>
+              )}
               <div className="flex items-center justify-center gap-3">
                 <Button onClick={() => { setError(null); setRounds([]); setProgress(0); }} variant="outline" size="sm" style={{ borderRadius: "9999px" }}>Start Over</Button>
               </div>

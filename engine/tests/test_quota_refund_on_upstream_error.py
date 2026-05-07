@@ -105,9 +105,12 @@ def test_refunds_when_upstream_error_and_ui_run():
     providers = _make_providers()
     exc = FakeServiceUnavailableError("Gemini 503")
 
-    asyncio.run(_maybe_refund_quota(providers, "user-abc", "forge", None, exc))
+    refunded = asyncio.run(_maybe_refund_quota(providers, "user-abc", "forge", None, exc))
 
     providers.storage.refund_quota.assert_awaited_once_with("user-abc", "forge")
+    # Return value is the signal that the bg task uses to mark
+    # progress_message with [quota_refunded] for the UI to surface.
+    assert refunded is True
 
 
 def test_does_not_refund_when_agent_job():
@@ -118,9 +121,10 @@ def test_does_not_refund_when_agent_job():
     providers = _make_providers()
     exc = FakeServiceUnavailableError("Gemini 503")
 
-    asyncio.run(_maybe_refund_quota(providers, "agent-pseudo", "forge", "job-xyz", exc))
+    refunded = asyncio.run(_maybe_refund_quota(providers, "agent-pseudo", "forge", "job-xyz", exc))
 
     providers.storage.refund_quota.assert_not_awaited()
+    assert refunded is False
 
 
 def test_does_not_refund_when_non_upstream_error():
@@ -151,13 +155,16 @@ def test_logs_no_op_when_refund_returns_nothing_to_refund():
     """If consume_quota wasn't actually called (race condition: refund
     fires before consume completes) the RPC returns
     {ok:false, reason:nothing_to_refund}. _maybe_refund_quota logs and
-    moves on — we don't want to retry/loop on that."""
+    moves on — we don't want to retry/loop on that. Return value must
+    be False so the bg task does NOT mark [quota_refunded] in the
+    progress_message (nothing was actually refunded)."""
     providers = _make_providers(refund_result={"ok": False, "reason": "nothing_to_refund"})
     exc = FakeServiceUnavailableError("Gemini 503")
 
     # Should not raise; should still call refund_quota (RPC handles it)
-    asyncio.run(_maybe_refund_quota(providers, "user-abc", "scout", None, exc))
+    refunded = asyncio.run(_maybe_refund_quota(providers, "user-abc", "scout", None, exc))
     providers.storage.refund_quota.assert_awaited_once_with("user-abc", "scout")
+    assert refunded is False
 
 
 def test_handles_none_refund_result():

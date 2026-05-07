@@ -102,6 +102,46 @@ const SCAN_SOURCES = [
 
 type ScanPhase = typeof PHASES[number]["id"] | "idle" | "complete" | "error";
 
+// --- Error formatting ---
+//
+// The engine writes failure detail into scout_reports.progress_message.
+// On a classified-upstream failure that triggered a quota refund, the
+// engine appends `[quota_refunded]` (see engine/api.py
+// QUOTA_REFUNDED_MARKER). We strip it here and surface it as a separate
+// green sub-line in the error block.
+const QUOTA_REFUNDED_MARKER = "[quota_refunded]";
+
+function wasQuotaRefunded(error: string): boolean {
+  return error.includes(QUOTA_REFUNDED_MARKER);
+}
+
+function stripQuotaMarker(error: string): string {
+  return error.replace(QUOTA_REFUNDED_MARKER, "").trim();
+}
+
+function formatErrorTitle(error: string): string {
+  const lower = stripQuotaMarker(error).toLowerCase();
+  if (lower.includes("overload") || lower.includes("529")) return "AI Model Temporarily Overloaded";
+  if (lower.includes("503") || lower.includes("service unavailable") || lower.includes("unavailable")) return "AI Provider Temporarily Down";
+  if (lower.includes("rate") || lower.includes("429") || lower.includes("too many requests")) return "Rate Limit Reached";
+  if (lower.includes("timeout") || lower.includes("timed out")) return "Request Timed Out";
+  if (lower.includes("connection") || lower.includes("network")) return "Network Connection Issue";
+  if (lower.includes("api key") || lower.includes("401")) return "API Key Issue";
+  return "Scan Failed";
+}
+
+function formatErrorMessage(error: string): string {
+  const cleaned = stripQuotaMarker(error);
+  const lower = cleaned.toLowerCase();
+  if (lower.includes("overload") || lower.includes("529")) return "The AI model provider is experiencing high traffic. Please wait a few minutes and try again.";
+  if (lower.includes("503") || lower.includes("service unavailable") || lower.includes("unavailable")) return "The AI model provider's API is currently unavailable. This is on their end, not yours — try again in a few minutes, or switch to a different model in Settings.";
+  if (lower.includes("rate") || lower.includes("429") || lower.includes("too many requests")) return "You've hit the API rate limit. Please wait or switch to a different model.";
+  if (lower.includes("timeout") || lower.includes("timed out")) return "The scan took too long. Try fewer sectors, or try again in a moment.";
+  if (lower.includes("connection") || lower.includes("network")) return "Could not reach the AI provider. Check your internet connection or try again in a moment.";
+  if (lower.includes("api key") || lower.includes("401")) return "Your API key may be invalid or expired. Check your Settings page.";
+  return cleaned.replace(/^Error:\s*/i, "").substring(0, 200) || "Something went wrong during the scan. Please try again.";
+}
+
 export default function ScoutPage() {
   const router = useRouter();
   const supabase = createClient();
@@ -275,7 +315,10 @@ export default function ScoutPage() {
               channelRef.current = null;
             } else if (row.status === "error") {
               setPhase("error");
-              setError("The scan encountered an error. Please try again.");
+              // Surface the engine's progress_message so the user sees the
+              // actual upstream error (and the [quota_refunded] marker if
+              // applicable) instead of a generic line.
+              setError(row.progress_message || "The scan encountered an error. Please try again.");
               channel.unsubscribe();
               channelRef.current = null;
             }
@@ -298,7 +341,7 @@ export default function ScoutPage() {
               const data = await check.json();
               if (data.status === "error") {
                 setPhase("error");
-                setError("The scan encountered an error. Please try again.");
+                setError(data.progress_message || "The scan encountered an error. Please try again.");
                 channel.unsubscribe();
                 channelRef.current = null;
                 clearInterval(stallCheckRef.current!);
@@ -622,11 +665,23 @@ export default function ScoutPage() {
                 className="font-heading text-3xl font-bold text-foreground"
                 style={{ letterSpacing: "-1.5px", lineHeight: "1.08" }}
               >
-                Scan Failed
+                {error ? formatErrorTitle(error) : "Scan Failed"}
               </h2>
               <p className="max-w-md text-muted-foreground" style={{ lineHeight: "1.55" }}>
-                {error || "Something went wrong during the scan. Please try again."}
+                {error ? formatErrorMessage(error) : "Something went wrong during the scan. Please try again."}
               </p>
+              {error && wasQuotaRefunded(error) && (
+                <div
+                  className="text-xs inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full"
+                  style={{
+                    backgroundColor: "oklch(0.95 0.05 145)",
+                    color: "oklch(0.40 0.13 145)",
+                    border: "1px solid oklch(0.85 0.08 145)",
+                  }}
+                >
+                  ✓ Your Scout run quota was NOT used — retry anytime.
+                </div>
+              )}
               <div className="flex gap-3">
                 <Button
                   onClick={() => {

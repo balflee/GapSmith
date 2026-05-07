@@ -124,27 +124,46 @@ def _is_upstream_error(exc: BaseException) -> bool:
     return any(frag in msg for frag in _UPSTREAM_MESSAGE_FRAGMENTS)
 
 
-async def _maybe_refund_quota(providers, user_id: str, sku: str, agent_job_id: str | None, exc: BaseException) -> None:
+async def _maybe_refund_quota(providers, user_id: str, sku: str, agent_job_id: str | None, exc: BaseException) -> bool:
     """If `exc` is a classified upstream error AND this is a UI-path run
     (not an agent x402 job), refund one quota unit. Best-effort — never
-    raises into the caller's error path."""
+    raises into the caller's error path. Returns True iff a refund was
+    actually executed (used by callers to annotate progress_message so
+    the UI can show "Your quota was not used")."""
     if agent_job_id:
         # Agent x402 jobs settle via the x402 payment record, not the
         # consume_quota counter. Quota refund here would be a no-op
         # (pseudo-user has no counter) but skipping avoids noisy logs.
-        return
+        return False
     if not _is_upstream_error(exc):
         print(f"[QUOTA REFUND] {sku} session failure NOT classified as upstream — quota stays consumed: {type(exc).__name__}: {str(exc)[:200]}", flush=True)
-        return
+        return False
     try:
         result = await providers.storage.refund_quota(user_id, sku)
         if result and result.get("ok"):
             print(f"[QUOTA REFUND] OK user={user_id} sku={sku} reason=upstream:{type(exc).__name__} remaining={result.get('remaining')}", flush=True)
-        else:
-            reason = (result or {}).get("reason", "unknown")
-            print(f"[QUOTA REFUND] no-op user={user_id} sku={sku} reason={reason}", flush=True)
+            return True
+        reason = (result or {}).get("reason", "unknown")
+        print(f"[QUOTA REFUND] no-op user={user_id} sku={sku} reason={reason}", flush=True)
+        return False
     except Exception as refund_exc:
         print(f"[QUOTA REFUND] FAILED user={user_id} sku={sku}: {refund_exc}", flush=True)
+        return False
+
+
+# Sentinel suffix appended to forge_sessions.progress_message (and the
+# scout/prove equivalents) when an upstream-classified failure refunded
+# the quota unit. UI strips this before formatting and uses its presence
+# to render a green "Your quota was not used" sub-line. Lightweight
+# convention chosen over a new DB column to avoid a follow-up migration.
+QUOTA_REFUNDED_MARKER = " [quota_refunded]"
+
+
+def _format_error_msg(exc: BaseException, refunded: bool) -> str:
+    base = f"Error: {str(exc)[:200]}"
+    if refunded:
+        return base + QUOTA_REFUNDED_MARKER
+    return base
 
 
 # --- Webhook delivery (for x402 async jobs) ---
@@ -220,7 +239,14 @@ async def _run_scout_bg(req: RunScoutRequest):
     except Exception as e:
         print(f"[SCOUT ERROR] {req.session_id}: {e}", flush=True)
         traceback.print_exc()
-        await _maybe_refund_quota(providers, req.user_id, "scout", None, e)
+        refunded = await _maybe_refund_quota(providers, req.user_id, "scout", None, e)
+        try:
+            await providers.storage.update_progress(
+                "scout_reports", req.session_id, last_pct, _format_error_msg(e, refunded)
+            )
+            await providers.storage.update_status("scout_reports", req.session_id, "error")
+        except Exception:
+            pass
         try:
             await providers.storage.update_progress(
                 "scout_reports", req.session_id, last_pct, f"Error: {str(e)[:200]}"
@@ -315,10 +341,10 @@ async def _run_forge_bg(req: RunForgeRequest):
     except Exception as e:
         print(f"[FORGE ERROR] {req.session_id}: {e}", flush=True)
         traceback.print_exc()
-        await _maybe_refund_quota(providers, req.user_id, "forge", req.agent_job_id, e)
+        refunded = await _maybe_refund_quota(providers, req.user_id, "forge", req.agent_job_id, e)
         try:
             await providers.storage.update_progress(
-                "forge_sessions", req.session_id, last_pct, f"Error: {str(e)[:200]}"
+                "forge_sessions", req.session_id, last_pct, _format_error_msg(e, refunded)
             )
             await providers.storage.update_status("forge_sessions", req.session_id, "error")
         except Exception:
@@ -400,10 +426,10 @@ async def _run_prove_bg(req: RunProveRequest):
     except Exception as e:
         print(f"[PROVE ERROR] {req.session_id}: {e}", flush=True)
         traceback.print_exc()
-        await _maybe_refund_quota(providers, req.user_id, "prove", req.agent_job_id, e)
+        refunded = await _maybe_refund_quota(providers, req.user_id, "prove", req.agent_job_id, e)
         try:
             await providers.storage.update_progress(
-                "prove_sessions", req.session_id, last_pct, f"Error: {str(e)[:200]}"
+                "prove_sessions", req.session_id, last_pct, _format_error_msg(e, refunded)
             )
             await providers.storage.update_status("prove_sessions", req.session_id, "error")
         except Exception:
