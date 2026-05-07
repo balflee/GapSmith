@@ -166,88 +166,40 @@ def detect_defender_pivot(defender_output: str) -> bool:
     return any(signal in defender_output for signal in pivot_signals)
 
 
-_NEGATION_TOKENS = (
-    "not declared", "not triggered", "not applicable", "no pivot",
-    "no change", "not required", "none", "n/a", "na.", "na ", "na\n",
-    "no direction change", "not a pivot", "no pivot_out", "no direction_change",
-    "not needed", "unnecessary", "status: no", "false",
-)
-
-
-def _is_negated_declaration(text_after_marker: str) -> bool:
-    """
-    After a marker like `DIRECTION_CHANGE:`, check if the immediate content is a
-    negation ("Not Declared", "None", "N/A", etc.) — meaning the agent is explicitly
-    NOT declaring a pivot, just echoing the instruction.
-    """
-    snippet = text_after_marker.strip().lstrip("*_#` \t").lower()[:80]
-    if not snippet:
-        return True  # empty content after marker = not a real declaration
-    for tok in _NEGATION_TOKENS:
-        if snippet.startswith(tok):
-            return True
-    return False
-
-
 def detect_pivot_out(output: str, source: str) -> tuple[bool, str]:
     """
-    Detect if an agent triggered a pivot-out.
+    Detect if an agent triggered a pivot-out via mandatory verdict YAML block.
 
-    Must be a real self-declaration. Requires:
-    - The marker with colon (`🔴 PIVOT_OUT:` or `PIVOT_OUT:`) AND
-    - Located at start of output OR at start of a line AND
-    - The content AFTER the colon is NOT a negation ("Not Declared", "No", "None", etc.)
+    Each role declares status in a YAML block at the end of its output. The
+    `make_verdict_validator` gate enforces presence + valid enum, so by the
+    time we parse here the block is well-formed (or a [QUALITY_WARNING] was
+    prepended after the gate exhausted retries).
 
-    Sources and their markers:
-    - proposer/defender: 🔴 PIVOT_OUT (self-declared)
-    - challenger: 🔴 DIRECTION_CHANGE (detected Proposer shifted direction)
+    Triggers (per VERDICT_STATUSES map in validators.py):
+    - proposer status=PIVOT_OUT          (core thesis abandoned in R2+)
+    - defender status=PIVOT_OUT          (cannot defend honestly)
+    - challenger status=DIRECTION_CHANGE (Proposer silently switched direction)
 
-    Returns (is_pivot, reason).
+    Returns (is_pivot, reason). Defaults to False on missing/malformed block —
+    the gate is supposed to catch malformed blocks before this point, so a
+    miss here means quality-warning fallthrough; safer to continue debate
+    than terminate (regex-era false-positives killed entire debate runs and
+    motivated the YAML-block redesign in 49cc2ac).
     """
-    marker_map = {
-        "proposer": "PIVOT_OUT",
-        "defender": "PIVOT_OUT",
-        "challenger": "DIRECTION_CHANGE",
-    }
-    marker = marker_map.get(source)
-    if not marker:
+    from engine.core.validators import parse_verdict_block, VERDICT_STATUSES
+
+    data = parse_verdict_block(output, source)
+    if data is None:
         return False, ""
 
-    strict_patterns = [
-        f"🔴 {marker}:",
-        f"🔴{marker}:",
-        f"{marker}:",
-    ]
-    head = output[:500]
+    status = data.get("status")
+    pivot_map = VERDICT_STATUSES.get(source, {})
+    if status not in pivot_map:
+        return False, ""
 
-    # Helper: validate a match by checking content after the colon
-    def _validate_match(match_start_idx: int, marker_len: int) -> tuple[bool, str]:
-        # Extract text after the colon
-        after_colon_idx = output.find(":", match_start_idx) + 1
-        following = output[after_colon_idx: after_colon_idx + 200]
-        if _is_negated_declaration(following):
-            return False, ""
-        reason_text = output[match_start_idx: match_start_idx + 500].strip()
-        return True, reason_text
-
-    # Start-of-output match
-    for p in strict_patterns:
-        if p in head:
-            idx = head.find(p)
-            ok, reason = _validate_match(idx, len(p))
-            if ok:
-                return True, reason
-            # keep searching in case another instance further down is real
-
-    # Start-of-line match (after newline)
-    import re
-    for p in strict_patterns:
-        for m in re.finditer(r"(?:\n|\r)\s*" + re.escape(p), output):
-            idx = m.end() - len(p)
-            ok, reason = _validate_match(idx, len(p))
-            if ok:
-                return True, reason
-
+    if pivot_map[status]:  # True = this status terminates debate
+        reason = data.get("reason_brief") or data.get("reason") or f"status={status}"
+        return True, str(reason)
     return False, ""
 
 

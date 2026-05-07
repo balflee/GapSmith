@@ -141,8 +141,30 @@ async def run_phase_a(state: DebateState, providers: Providers, on_progress=None
     if kb_context:
         prompt += f"\n\n## 📖 Key Data from Previous Round (KB)\n\n{kb_context}"
 
+    # R2+: require verdict YAML block + gate it (R1 has no pivot detection)
+    if state.current_round > 1:
+        prompt += """
+
+---
+
+## ⚠️ MANDATORY: append a verdict YAML block at the **end** of your reply (machine-parsed)
+
+```yaml
+status: ADJUSTING  # must be one of: ADJUSTING | PIVOT_OUT
+reason_brief: "<one-line reason, <200 chars>"
+```
+
+- **ADJUSTING** (default): you are sharpening / refining direction, but the core wedge is unchanged.
+- **PIVOT_OUT**: the core direction cannot be salvaged and the entire idea should be abandoned.
+  - This is the **nuclear option** — it terminates the entire debate.
+  - **Only use when you genuinely cannot solve the open challenges with adjustments.**
+"""
+        proposer_validator = V.compose_validators(V.validate_proposer, V.make_verdict_validator("proposer"))
+    else:
+        proposer_validator = V.validate_proposer
+
     resp = await helpers.call_with_gate(
-        providers, prompt, V.validate_proposer,
+        providers, prompt, proposer_validator,
         system_prompt=personas.PROPOSER_SYSTEM,
         max_tokens=4096,
         min_length=helpers.MIN_MAIN_AGENT_LEN,
@@ -256,6 +278,7 @@ Return as markdown."""
 
     # Step 3: Final challenge
     direction_check = ""
+    verdict_block_instruction = ""
     if state.current_round > 1:
         prev_proposer = state.get_output(state.current_round - 1, "A", "proposer") or ""
         direction_check = f"""
@@ -267,11 +290,23 @@ Previous round Proposer plan:
 Current round Proposer plan:
 {proposer_output[:1000]}
 
-If you believe the current Proposer plan is no longer the same idea (core value prop, target user, or business model fundamentally changed), declare at the start:
+If the Proposer secretly switched to a different idea (core value prop / target user / business model fundamentally changed — not just parameter tweaks), declare it via the verdict YAML block at the end of your reply (status=DIRECTION_CHANGE).
+"""
+        verdict_block_instruction = """
 
-🔴 DIRECTION_CHANGE: [explain which core elements changed and why this is a direction shift, not adjustment]
+---
 
-Declaring DIRECTION_CHANGE ends the debate. Only declare if truly changed. Parameter tweaks, pricing, user refinement are NOT direction changes.
+## ⚠️ MANDATORY: append a verdict YAML block at the **end** of your reply (machine-parsed)
+
+```yaml
+status: CONTINUE  # must be one of: CONTINUE | DIRECTION_CHANGE
+reason_brief: "<one-line reason, <200 chars>"
+```
+
+- **CONTINUE** (default): standard challenge, original direction holds.
+- **DIRECTION_CHANGE**: the Proposer secretly switched to a different idea in R2+.
+  - Parameter tweaks, pricing changes, or user refinements are **NOT** direction changes.
+  - **Only declare when the core wedge actually changed** — this terminates the debate.
 """
 
     step3_prompt = f"""Round {state.current_round} / Phase B / Step 3: Synthesized Challenge
@@ -297,9 +332,15 @@ Requirements:
 Return as markdown.
 
 **Critical**: Carry through at least 3 competitor/evidence URLs from Step 1 + Step 2 search results
-as inline citations (`[REF: SEARCH] URL` or bare URL). Unsourced challenges are not credible."""
+as inline citations (`[REF: SEARCH] URL` or bare URL). Unsourced challenges are not credible.{verdict_block_instruction}"""
+
+    if state.current_round > 1:
+        challenger_validator = V.compose_validators(V.validate_challenger_final, V.make_verdict_validator("challenger"))
+    else:
+        challenger_validator = V.validate_challenger_final
+
     step3 = await helpers.call_with_gate(
-        providers, step3_prompt, V.validate_challenger_final,
+        providers, step3_prompt, challenger_validator,
         system_prompt=personas.CHALLENGER_SYSTEM,
         max_tokens=4096,
         use_search=False,  # already have step1 + step2 inline
@@ -658,20 +699,34 @@ Requirements:
 - Response type: ✅ AGREE / ❌ REFUTE / 🔄 EXTEND / ⚠️ PARTIAL
 - AGREE → adjustment. REFUTE → cite search evidence. No evidence → mark `[unverified]`.
 - If major adjustment, provide the updated idea version.
-- Final: Verdict strengthened / adjusted / vulnerable + stats
-
-⚠️ If you believe challenges cannot be answered and the original direction is untenable:
-🔴 PIVOT_OUT: [brief reason + suggested new direction]
-
-Declaring PIVOT_OUT ends the debate. Only declare if truly unsalvageable.
 
 **Critical**: Every REFUTE response MUST cite inline search evidence (`[REF: SEARCH] URL`
 from your Step 1 evidence search or the Evidence Hunter report above). Unverified claims
 must be labeled `[unverified]`. Dropping citations is not acceptable.
 
-Return as markdown."""
+Return as markdown.
+
+---
+
+## ⚠️ MANDATORY: append a verdict YAML block at the **end** of your reply (machine-parsed)
+
+```yaml
+status: ADJUSTED  # must be one of: STRENGTHENED | ADJUSTED | VULNERABLE | PIVOT_OUT
+reason_brief: "<one-line reason, <200 chars>"
+```
+
+The four options:
+- **STRENGTHENED**: evidence search backed your position; no major concessions.
+- **ADJUSTED** (default, most common): you partially conceded and adjusted the plan, but the wedge holds.
+- **VULNERABLE**: serious unresolved challenges remain — but you do NOT abandon the direction; defer to next round / external validation.
+- **PIVOT_OUT**: you honestly judge that the original direction **cannot** be defended, and the entire idea should be abandoned.
+  - **This is the nuclear option — it terminates the debate.**
+  - **Only use when you genuinely cannot find any adjustment path.**
+  - "Has open challenges" / "needs adjustment" / "evidence is partly against me but I have a counter" are **NOT** PIVOT_OUT — those are ADJUSTED or VULNERABLE."""
+
+    defender_validator = V.compose_validators(V.validate_defender_final, V.make_verdict_validator("defender"))
     step2 = await helpers.call_with_gate(
-        providers, step2_prompt, V.validate_defender_final,
+        providers, step2_prompt, defender_validator,
         system_prompt=personas.DEFENDER_SYSTEM,
         max_tokens=4096,
         use_search=False,  # Defender already has evidence from step 1 + Evidence Hunter

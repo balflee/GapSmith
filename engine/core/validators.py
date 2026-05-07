@@ -5,6 +5,7 @@ Each validator returns (passed: bool, feedback: str).
 """
 
 import re
+import yaml
 
 
 def _count_urls(text: str) -> int:
@@ -337,3 +338,100 @@ def validate_reverse_search(output: str) -> tuple[bool, str]:
     if issues:
         return False, "\n".join(f"- {i}" for i in issues)
     return True, ""
+
+
+# --- Verdict block validators (PIVOT_OUT replacement, ported from
+# pipeline/debate_validators.py @ commit 49cc2ac) ---
+#
+# Three rounds of regex tightening on Idea Generator's substring-based
+# PIVOT_OUT detection failed to handle every false-positive variant
+# (negation, markdown emphasis, stats table rows, quoted discussion).
+# Each false positive killed a full debate run (~$3-5) at REJECTED when
+# the actual verdict was ADJUSTED. The only durable fix is requiring
+# agents to declare verdict in a structured YAML block parsed by code.
+
+# Allowed status values per role. True = this status triggers PIVOT_OUT
+# handling (terminates debate). False = informational, debate continues.
+VERDICT_STATUSES = {
+    "proposer": {
+        "ADJUSTING": False,   # default — refining/sharpening, no pivot
+        "PIVOT_OUT": True,    # core thesis abandoned in R2+
+    },
+    "defender": {
+        "STRENGTHENED": False,  # evidence search supported the position
+        "ADJUSTED": False,      # partial concessions but wedge holds (default)
+        "VULNERABLE": False,    # serious unresolved concerns but not abandoning
+        "PIVOT_OUT": True,      # cannot defend honestly
+    },
+    "challenger": {
+        "CONTINUE": False,            # standard challenge, original direction holds
+        "DIRECTION_CHANGE": True,     # Proposer secretly switched directions in R2+
+    },
+}
+
+
+def parse_verdict_block(output: str, role: str) -> dict | None:
+    """Extract YAML verdict block from agent output. Returns parsed dict or None.
+
+    Matches the LAST yaml fence in the output containing a `status:` key —
+    agents typically place the verdict block at the very end of their reply,
+    and we want the actual declaration even if they discussed the format
+    earlier in their text.
+    """
+    matches = list(re.finditer(r'```ya?ml\s*\n(.*?)\n\s*```', output, re.DOTALL | re.IGNORECASE))
+    for m in reversed(matches):
+        body = m.group(1)
+        if 'status:' not in body:
+            continue
+        try:
+            data = yaml.safe_load(body)
+            if isinstance(data, dict) and 'status' in data:
+                return data
+        except yaml.YAMLError:
+            continue
+    return None
+
+
+def make_verdict_validator(role: str):
+    """Build a validator that requires a valid YAML verdict block at the end."""
+    allowed = VERDICT_STATUSES.get(role, {})
+    allowed_str = " | ".join(allowed.keys())
+
+    def _validate(output: str) -> tuple[bool, str]:
+        data = parse_verdict_block(output, role)
+        if data is None:
+            return False, (
+                f"Missing verdict YAML block. Append to the **end** of your reply:\n"
+                f"```yaml\n"
+                f"status: {list(allowed.keys())[0]}  # must be one of: {allowed_str}\n"
+                f"reason_brief: \"<one-line reason, <200 chars>\"\n"
+                f"```"
+            )
+        status = data.get('status')
+        if status not in allowed:
+            return False, (
+                f"verdict status='{status}' is not an allowed value. "
+                f"{role} must pick one of: [{allowed_str}].\n"
+                f"PIVOT_OUT-class statuses are TERMINATING — only use them when you genuinely "
+                f"cannot salvage the direction. \"Has open challenges\" or \"needs adjustment\" "
+                f"is NOT pivot-out; that's ADJUSTED or VULNERABLE."
+            )
+        return True, ""
+
+    return _validate
+
+
+def compose_validators(*validators):
+    """Chain multiple validators. Fails if any single validator fails;
+    aggregates feedback so the agent sees all issues in one retry."""
+    def _run(output: str) -> tuple[bool, str]:
+        all_pass = True
+        feedbacks = []
+        for v in validators:
+            ok, fb = v(output)
+            if not ok:
+                all_pass = False
+                if fb:
+                    feedbacks.append(fb)
+        return all_pass, "\n\n".join(feedbacks)
+    return _run
