@@ -84,15 +84,18 @@ def validate_competitive(output: str) -> tuple[bool, str]:
     issues = []
 
     has_landscape = _has_markers(output, [
-        'BLUE_OCEAN', 'IMPROVABLE', 'RED_OCEAN',
-        'blue ocean', 'improvable', 'red ocean',
+        'BLUE_OCEAN', 'IMPROVABLE', 'RECONSTRUCT', 'RED_OCEAN',
+        'blue ocean', 'improvable', 'reconstruct', 'red ocean',
         'no mature solution', 'no direct competitor',
         'solutions exist', 'competitors include',
+        'jtbd', 'job-to-be-done', 'job to be done',
     ])
     if not has_landscape:
         issues.append(
             "Missing competitive markers. Mark each pain point as "
-            "BLUE_OCEAN (no solution) / IMPROVABLE (exists but poor) / RED_OCEAN (mature solutions). "
+            "BLUE_OCEAN (no solution) / IMPROVABLE (exists but poor) / "
+            "RECONSTRUCT (mature solution but JTBD has shifted) / "
+            "RED_OCEAN (mature + satisfied + JTBD unchanged). "
             "Search '[pain point] solution/tool/SaaS' to confirm."
         )
 

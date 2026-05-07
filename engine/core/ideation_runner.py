@@ -320,12 +320,22 @@ For each HIGH and MEDIUM frequency pain point, search existing solutions:
 - Search "[pain keyword] alternative to [existing tool]"
 - If tools found: search "[tool name] pricing" + "[tool name] review / complaints"
 
-Mark each pain point:
-- BLUE_OCEAN: No mature solution → biggest opportunity
-- IMPROVABLE: Solutions exist but users complain → explain what's wrong
-- RED_OCEAN: Mature solutions with satisfied users → skip unless fundamentally different angle
+Mark each pain point (**do not** treat "no mature solution" as the biggest signal — most BLUE_OCEAN bands are graveyards where others tried and failed for structural reasons; the biggest real opportunities usually live in RECONSTRUCT):
 
-Output: Competitive marker + search findings for each pain point.{LANG_SUFFIX}"""
+- **BLUE_OCEAN**: No mature solution exists
+  - ⚠️ Must answer: "Why hasn't anyone done this?" — Is the tech newly mature, regulation newly opened, user behavior newly shifted? Or did people try and fail (the more common case)?
+  - If you can't name a structural opening signal → downgrade this pain point; do NOT treat it as the biggest opportunity.
+
+- **IMPROVABLE**: Solutions exist but users complain → spell out what's wrong + how much room there is to improve.
+
+- **RECONSTRUCT**: Mature solutions exist and users seem satisfied on the surface, BUT the Job-To-Be-Done has shifted underneath
+  - This is the starting point for Notion / Linear / Figma / Stripe class opportunities
+  - You MUST state: (a) How has the JTBD changed? (what users actually do today vs. 5 years ago), (b) Why does the existing solution structurally fail to follow? (not a missing feature — a wrong underlying architecture)
+  - If you can't articulate the JTBD shift cleanly → don't force-fit it here, mark it RED_OCEAN honestly.
+
+- **RED_OCEAN**: Mature solutions + satisfied users + JTBD unchanged → skip.
+
+Output: Competitive marker + search findings for each pain point + the required follow-up (BLUE_OCEAN's structural opening signal / RECONSTRUCT's JTBD shift point).{LANG_SUFFIX}"""
 
     r3 = await _call_with_gate(providers, prompt=step3_prompt, validator=validate_competitive,
                                 max_tokens=_max_tokens_for(providers.model, 4096))
@@ -352,8 +362,11 @@ Original context (for product mode constraints):
 {context[:2000]}{sc_block}
 
 Task:
-- Focus on BLUE_OCEAN and IMPROVABLE pain points (skip RED_OCEAN)
-- Design a solution for each valuable pain point
+- Focus on BLUE_OCEAN, IMPROVABLE, and RECONSTRUCT pain points (skip RED_OCEAN)
+- Each category has a different argumentation requirement:
+  - **BLUE_OCEAN solution**: You MUST restate the structural opening signal from Step 3 ("why hasn't anyone done this?"). If you can't name one, do NOT use this as your core wedge.
+  - **IMPROVABLE solution**: Spell out what's wrong with the existing solution + your specific improvement.
+  - **RECONSTRUCT solution**: You MUST restate the JTBD shift point from Step 3. The wedge must argue "underlying architecture is wrong", not "missing feature".
 - Start from pain, not from technology
 - User story: "[User type] needs [solution to X], because [current approach Y is broken]"
 - 10x improvement: How is this 10x better than existing solutions?
