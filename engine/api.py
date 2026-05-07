@@ -72,6 +72,81 @@ class RunProveRequest(BaseModel):
     agent_job_id: str | None = None    # Set when called via /api/v1/prove/debate (agent x402)
 
 
+# --- Upstream error classification (for quota refund) ---
+#
+# When the engine fails because the LLM provider returned a 5xx, rate
+# limited us, or the connection died, the user got nothing of value AND
+# (for UI runs) already had 1 quota unit consumed at /api/{forge,prove,
+# scout}/start. We refund those — anything else (validator quality
+# warnings, JSON parse bugs, our orchestration bugs) is either a
+# delivered run or our fault, and stays consumed so we hear about it.
+#
+# Classification by exception class name keeps the dependency surface
+# minimal — no need to import every provider SDK to do isinstance
+# checks, and litellm rewraps most provider exceptions with these names
+# anyway. Message-substring fallback catches stragglers (anthropic
+# OverloadedError 529 sometimes leaks through as a generic exception
+# with "529" / "overloaded" in str()).
+
+_UPSTREAM_EXCEPTION_NAMES = frozenset({
+    # litellm rewrappings
+    "ServiceUnavailableError",   # 503
+    "RateLimitError",            # 429
+    "APIConnectionError",        # network
+    "APITimeoutError",           # client-side timeout
+    "Timeout",                   # asyncio + litellm both raise
+    "InternalServerError",       # 500
+    "BadGatewayError",           # 502
+    # provider-native (in case they leak through wrappers)
+    "OverloadedError",           # anthropic 529
+    "ServerError",               # generic provider 5xx
+    "ConnectionError",
+    "ConnectTimeout",
+    "ReadTimeout",
+})
+
+_UPSTREAM_MESSAGE_FRAGMENTS = (
+    "503", "529", "502", "500 internal", "429",
+    "service unavailable", "overloaded",
+    "rate limit", "rate_limit", "too many requests",
+    "connection error", "connection reset", "connection refused",
+    "read timeout", "timed out",
+    "upstream",
+)
+
+
+def _is_upstream_error(exc: BaseException) -> bool:
+    """True iff the exception is an upstream LLM provider failure that the
+    user couldn't have caused and we should refund quota for."""
+    if type(exc).__name__ in _UPSTREAM_EXCEPTION_NAMES:
+        return True
+    msg = str(exc).lower()
+    return any(frag in msg for frag in _UPSTREAM_MESSAGE_FRAGMENTS)
+
+
+async def _maybe_refund_quota(providers, user_id: str, sku: str, agent_job_id: str | None, exc: BaseException) -> None:
+    """If `exc` is a classified upstream error AND this is a UI-path run
+    (not an agent x402 job), refund one quota unit. Best-effort — never
+    raises into the caller's error path."""
+    if agent_job_id:
+        # Agent x402 jobs settle via the x402 payment record, not the
+        # consume_quota counter. Quota refund here would be a no-op
+        # (pseudo-user has no counter) but skipping avoids noisy logs.
+        return
+    if not _is_upstream_error(exc):
+        print(f"[QUOTA REFUND] {sku} session failure NOT classified as upstream — quota stays consumed: {type(exc).__name__}: {str(exc)[:200]}", flush=True)
+        return
+    try:
+        result = await providers.storage.refund_quota(user_id, sku)
+        if result and result.get("ok"):
+            print(f"[QUOTA REFUND] OK user={user_id} sku={sku} reason=upstream:{type(exc).__name__} remaining={result.get('remaining')}", flush=True)
+        else:
+            reason = (result or {}).get("reason", "unknown")
+            print(f"[QUOTA REFUND] no-op user={user_id} sku={sku} reason={reason}", flush=True)
+    except Exception as refund_exc:
+        print(f"[QUOTA REFUND] FAILED user={user_id} sku={sku}: {refund_exc}", flush=True)
+
+
 # --- Webhook delivery (for x402 async jobs) ---
 
 async def _deliver_webhook(url: str, job_id: str, status: str, result: dict) -> None:
@@ -145,6 +220,7 @@ async def _run_scout_bg(req: RunScoutRequest):
     except Exception as e:
         print(f"[SCOUT ERROR] {req.session_id}: {e}", flush=True)
         traceback.print_exc()
+        await _maybe_refund_quota(providers, req.user_id, "scout", None, e)
         try:
             await providers.storage.update_progress(
                 "scout_reports", req.session_id, last_pct, f"Error: {str(e)[:200]}"
@@ -239,6 +315,7 @@ async def _run_forge_bg(req: RunForgeRequest):
     except Exception as e:
         print(f"[FORGE ERROR] {req.session_id}: {e}", flush=True)
         traceback.print_exc()
+        await _maybe_refund_quota(providers, req.user_id, "forge", req.agent_job_id, e)
         try:
             await providers.storage.update_progress(
                 "forge_sessions", req.session_id, last_pct, f"Error: {str(e)[:200]}"
@@ -323,6 +400,7 @@ async def _run_prove_bg(req: RunProveRequest):
     except Exception as e:
         print(f"[PROVE ERROR] {req.session_id}: {e}", flush=True)
         traceback.print_exc()
+        await _maybe_refund_quota(providers, req.user_id, "prove", req.agent_job_id, e)
         try:
             await providers.storage.update_progress(
                 "prove_sessions", req.session_id, last_pct, f"Error: {str(e)[:200]}"

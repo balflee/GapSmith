@@ -184,6 +184,23 @@ class SupabaseStorage:
             print(f"[AGENT_JOB] fail update errored for {job_id}: {e}", flush=True)
             return None
 
+    async def refund_quota(self, user_id: str, sku: str) -> dict | None:
+        """Atomically refund one quota unit (engine calls this on classified
+        upstream LLM failure: 503/529/rate-limit/network). Wraps the
+        refund_quota Postgres RPC defined in migration 016. Returns the RPC
+        result dict ({'ok': True/False, ...}) or None on infrastructure
+        error — refund is best-effort recovery, never fail the engine
+        because of it."""
+        try:
+            res = self.client.rpc("refund_quota", {
+                "user_id_in": user_id,
+                "sku_in": sku,
+            }).execute()
+            return res.data if res.data else None
+        except Exception as e:
+            print(f"[QUOTA REFUND] RPC errored for user={user_id} sku={sku}: {e}", flush=True)
+            return None
+
     def _detect_table(self, state: dict) -> str:
         if "gaps" in state or "pain_clusters" in state:
             return "scout_reports"
