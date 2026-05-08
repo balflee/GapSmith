@@ -173,6 +173,67 @@ function ConditionsList({ conditions }: { conditions: string[] }) {
   );
 }
 
+// --- Idea preview with smart markdown handling ---
+//
+// session.idea ranges from a 50-char one-liner ("AgentMeter — cost
+// governance for AI agents") to a 5000-char markdown concept doc with
+// headings, tables, and pipe-separated comparisons. The original render
+// (plain <div>{idea}</div>) silently dropped newlines and surfaced
+// markdown literals (#, **, |) as user-visible junk on the long form.
+// Detect markdown / multiline shape and route accordingly:
+//   - short single-line → render inline (preserve current "feels like a
+//     subtitle" UX, no jarring header change for short ideas)
+//   - long or markdowny → MarkdownContent + collapsible 5-line preview
+function IdeaPreview({ idea }: { idea: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const trimmed = idea.trim();
+  // Heuristic: anything multi-line, over ~200 chars, or carrying obvious
+  // markdown markers (heading, bold, table pipe, blockquote, list dash,
+  // hr) gets the markdown treatment. False positives (a short plain idea
+  // with one bold word) just look slightly nicer; false negatives would
+  // re-introduce the literal-character bug, so bias toward markdown.
+  const hasMarkdown =
+    trimmed.includes("\n") ||
+    trimmed.length > 200 ||
+    /^#{1,6}\s|^\*\s|^-\s|^>\s|^---|\*\*|\|.+\|/m.test(trimmed);
+
+  if (!hasMarkdown) {
+    return (
+      <div className="text-sm" style={{ color: "oklch(0.45 0.02 65)", lineHeight: "1.55", maxWidth: "560px" }}>
+        {trimmed}
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative" style={{ maxWidth: "640px" }}>
+      <div className="overflow-hidden" style={{ maxHeight: expanded ? "none" : "120px" }}>
+        <MarkdownContent content={trimmed} />
+      </div>
+      {!expanded && (
+        <div className="absolute bottom-0 left-0 right-0 h-10 flex items-end justify-center" style={{ background: "linear-gradient(transparent, oklch(0.99 0.005 85))" }}>
+          <button
+            onClick={() => setExpanded(true)}
+            className="text-xs font-medium px-3 py-1 mb-1 rounded-full"
+            style={{ color: "oklch(0.45 0.02 65)", boxShadow: "0 0 0 1px oklch(0.85 0.012 65)" }}
+          >
+            Show full idea
+          </button>
+        </div>
+      )}
+      {expanded && (
+        <button
+          onClick={() => setExpanded(false)}
+          className="text-xs font-medium px-3 py-1 mt-2 rounded-full"
+          style={{ color: "oklch(0.45 0.02 65)", boxShadow: "0 0 0 1px oklch(0.85 0.012 65)" }}
+        >
+          Collapse
+        </button>
+      )}
+    </div>
+  );
+}
+
 // --- Agent output with collapse ---
 function AgentOutput({ content, color }: { content: string; color: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -470,9 +531,7 @@ function ProveReportContent() {
                 <h1 className="text-3xl font-bold" style={{ fontFamily: "var(--font-heading)", letterSpacing: "-2px", lineHeight: "1.08", color: "oklch(0.24 0.012 65)" }}>
                   Prove Report
                 </h1>
-                <div className="text-sm" style={{ color: "oklch(0.45 0.02 65)", lineHeight: "1.55", maxWidth: "560px" }}>
-                  {session.idea}
-                </div>
+                <IdeaPreview idea={session.idea} />
               </div>
             </div>
             <div className="flex flex-wrap gap-2 shrink-0">
