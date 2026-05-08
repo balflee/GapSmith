@@ -403,7 +403,13 @@ function ProveContent() {
     }
     return lines.join("\n");
   };
-  const canStart = ideaSource === "forge" ? !!selectedForgeIdea : manualIdea.trim().length > 10;
+
+  // Backend zod limits — keep in sync with src/app/api/prove/start/route.ts
+  // (startProveSchema). Enforcing client-side stops users from clicking
+  // Start, watching the page revert to idle, and not understanding why —
+  // the backend would 400 on Zod validation, frontend would just throw.
+  const IDEA_MAX_LENGTH = 10000;
+  const SESSION_CONFIG_MAX_LENGTH = 5000;
 
   const getIdeaText = () => {
     if (ideaSource === "forge" && selectedForgeIdea) {
@@ -412,6 +418,18 @@ function ProveContent() {
     }
     return manualIdea;
   };
+
+  const ideaLength = getIdeaText().length;
+  const sessionConfigLength = buildSessionConfig().length;
+  const ideaTooLong = ideaLength > IDEA_MAX_LENGTH;
+  const sessionConfigTooLong = sessionConfigLength > SESSION_CONFIG_MAX_LENGTH;
+
+  const canStart =
+    !ideaTooLong &&
+    !sessionConfigTooLong &&
+    (ideaSource === "forge"
+      ? !!selectedForgeIdea
+      : manualIdea.trim().length > 10);
 
   const handleStart = async () => {
     if (!canStart || isRunning) return;
@@ -634,9 +652,29 @@ function ProveContent() {
                       className="w-full text-sm rounded-[6px] px-4 py-2.5 resize-y transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[oklch(0.84_0.145_85/50%)]"
                       style={{ background: "oklch(0.96 0.008 80)", color: "oklch(0.24 0.012 65)", boxShadow: "0 0 0 1px rgba(0, 0, 0, 0.06)", lineHeight: "1.55" }}
                     />
-                    {manualIdea.length > 0 && manualIdea.length <= 10 && (
-                      <div className="text-xs mt-1.5 px-3 py-1.5 rounded-[6px]" style={{ background: "oklch(0.84 0.145 85 / 8%)", color: "oklch(0.60 0.08 52)" }}>
-                        Add more detail for a meaningful debate.
+                    <div className="flex items-center justify-between mt-1.5 text-xs" style={{ color: "oklch(0.55 0.02 65)" }}>
+                      <span>
+                        {manualIdea.length > 0 && manualIdea.length <= 10
+                          ? <span style={{ color: "oklch(0.60 0.08 52)" }}>Add more detail for a meaningful debate.</span>
+                          : null}
+                      </span>
+                      <span style={{
+                        color: manualIdea.length > IDEA_MAX_LENGTH ? "oklch(0.55 0.2 25)" : "oklch(0.55 0.02 65)",
+                        fontVariantNumeric: "tabular-nums",
+                      }}>
+                        {manualIdea.length.toLocaleString()} / {IDEA_MAX_LENGTH.toLocaleString()}
+                      </span>
+                    </div>
+                    {manualIdea.length > IDEA_MAX_LENGTH && (
+                      <div className="text-xs mt-2 px-3 py-2 rounded-[6px] flex items-start gap-2" style={{
+                        background: "oklch(0.55 0.2 25 / 8%)",
+                        color: "oklch(0.45 0.18 25)",
+                        border: "1px solid oklch(0.55 0.2 25 / 25%)",
+                      }}>
+                        <span aria-hidden="true">⚠️</span>
+                        <span>
+                          Your idea is <strong>{(manualIdea.length - IDEA_MAX_LENGTH).toLocaleString()} characters</strong> over the {IDEA_MAX_LENGTH.toLocaleString()}-char limit. Trim it before submitting, or paste a focused summary instead of the full draft.
+                        </span>
                       </div>
                     )}
                   </CardContent>
@@ -851,6 +889,23 @@ function ProveContent() {
               </Card>
             </div>
           </BlurFade>
+
+          {/* Length-limit warnings — surface session_config over-limit
+              so users understand why the Start button is disabled even if
+              their idea is fine. The idea over-limit warning is rendered
+              inline under the textarea above. */}
+          {sessionConfigTooLong && (
+            <div className="mt-4 mx-auto max-w-md text-xs px-3 py-2 rounded-[6px] flex items-start gap-2" style={{
+              background: "oklch(0.55 0.2 25 / 8%)",
+              color: "oklch(0.45 0.18 25)",
+              border: "1px solid oklch(0.55 0.2 25 / 25%)",
+            }}>
+              <span aria-hidden="true">⚠️</span>
+              <span>
+                Project Context is <strong>{(sessionConfigLength - SESSION_CONFIG_MAX_LENGTH).toLocaleString()} chars</strong> over the {SESSION_CONFIG_MAX_LENGTH.toLocaleString()}-char limit. Trim the Founder Signal field above.
+              </span>
+            </div>
+          )}
 
           {/* Start Button */}
           <div className="mt-6 flex justify-center">

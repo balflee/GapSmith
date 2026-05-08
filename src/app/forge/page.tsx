@@ -466,7 +466,13 @@ function ForgeContent() {
 
   const estimatedCost = (MODEL_COSTS[selectedModel]?.costPerRound ?? 0.20) * (TOTAL_ROUNDS + 1);
   const hasGuidedContent = guidedInputs.market.trim().length > 0 && guidedInputs.painPoints.trim().length > 0;
-  const canStart = sourceTab === "scout" ? !!scoutReport : hasGuidedContent;
+  // canStart fully defined below buildSessionConfig (needs the joined
+  // session_config string length to enforce the backend max(5000) limit).
+  // Backend zod limits — keep in sync with src/app/api/forge/start/route.ts.
+  const CONTEXT_MAX_LENGTH = 10000;
+  const SESSION_CONFIG_MAX_LENGTH = 5000;
+  const manualContextLength = sourceTab === "manual" ? buildManualContext().length : 0;
+  const contextTooLong = manualContextLength > CONTEXT_MAX_LENGTH;
 
   // Build SESSION_CONFIG.md markdown from form state (only emit when something differs from defaults)
   const buildSessionConfig = () => {
@@ -491,6 +497,16 @@ function ForgeContent() {
     }
     return lines.join("\n");
   };
+
+  // Final canStart now that buildSessionConfig is in scope. Without these
+  // checks, pasting a long doc into Pain Points / Additional Context (or
+  // a giant Founder Signal) silently 400's at /api/forge/start.
+  const sessionConfigLength = buildSessionConfig().length;
+  const sessionConfigTooLongForge = sessionConfigLength > SESSION_CONFIG_MAX_LENGTH;
+  const canStart =
+    !contextTooLong &&
+    !sessionConfigTooLongForge &&
+    (sourceTab === "scout" ? !!scoutReport : hasGuidedContent);
 
   const handleStart = async () => {
     console.log("[FORGE] handleStart clicked, canStart=", canStart, "isRunning=", isRunning, "sourceTab=", sourceTab);
@@ -1137,6 +1153,39 @@ function ForgeContent() {
               </Card>
             </div>
           </BlurFade>
+
+          {/* Length-limit warnings — prevent click → 400 → silent revert.
+              Shown only on the manual tab (scout-derived context is bounded
+              by Scout's own report sizing, not user input). */}
+          {sourceTab === "manual" && (contextTooLong || sessionConfigTooLongForge) && (
+            <div className="mt-4 mx-auto max-w-md text-xs px-3 py-2 rounded-[6px] flex flex-col gap-1.5" style={{
+              background: "oklch(0.55 0.2 25 / 8%)",
+              color: "oklch(0.45 0.18 25)",
+              border: "1px solid oklch(0.55 0.2 25 / 25%)",
+            }}>
+              {contextTooLong && (
+                <div className="flex items-start gap-2">
+                  <span aria-hidden="true">⚠️</span>
+                  <span>
+                    Project context is <strong>{(manualContextLength - CONTEXT_MAX_LENGTH).toLocaleString()} chars</strong> over the {CONTEXT_MAX_LENGTH.toLocaleString()}-char limit. Trim Pain Points / Additional Context.
+                  </span>
+                </div>
+              )}
+              {sessionConfigTooLongForge && (
+                <div className="flex items-start gap-2">
+                  <span aria-hidden="true">⚠️</span>
+                  <span>
+                    Project Context (Profile/Budget/Founder Signal) is <strong>{(sessionConfigLength - SESSION_CONFIG_MAX_LENGTH).toLocaleString()} chars</strong> over the {SESSION_CONFIG_MAX_LENGTH.toLocaleString()}-char limit. Trim Founder Signal.
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+          {sourceTab === "manual" && !contextTooLong && manualContextLength > CONTEXT_MAX_LENGTH * 0.85 && (
+            <div className="mt-4 mx-auto max-w-md text-xs text-center" style={{ color: "oklch(0.55 0.02 65)" }}>
+              {manualContextLength.toLocaleString()} / {CONTEXT_MAX_LENGTH.toLocaleString()} characters
+            </div>
+          )}
 
           {/* Start Button — no BlurFade wrapper to avoid click interception */}
           <div className="mt-6 flex justify-center">
