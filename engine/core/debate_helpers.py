@@ -25,8 +25,123 @@ SEARCHES_PER_CALL = 3
 # Search query extraction (domain-aware)
 # ============================================================
 
+def _clean_domain(text: str, max_len: int = 60) -> str:
+    """Strip markdown / version / status noise from extracted domain text.
+
+    Without this, regex-extracted domains carry literal noise that
+    Tavily can't parse usefully. Examples from real debates:
+
+    "# APAC L&D Simulation 平台 — 概念文档 v0.4" → "APAC L&D Simulation 平台"
+    "## My Idea [DRAFT]"                       → "My Idea"
+    "**AgentMeter — v2.1**"                    → "AgentMeter"
+
+    The full noisy form gets templated into queries like "{domain} SaaS
+    pricing plans" and Tavily falls back to generic SaaS catnip results.
+    """
+    if not text:
+        return ""
+    # Strip leading markdown / heading / quote / list chars iteratively
+    # (handles "## ", "**", "> ", "- ", combinations, leading whitespace)
+    while text and text[0] in '#*>-`~ \t​':
+        text = text[1:]
+    # Strip Chinese version-doc suffix (— 概念文档 v0.4)
+    text = re.sub(r'\s*[—–\-]\s*概念文档\s*v?\d+(\.\d+)*\s*$', '', text)
+    # Strip English version suffix (— v0.4, -- version 3)
+    text = re.sub(r'\s*[—–\-]+\s*(?:version\s+|v)\d+(\.\d+)*\s*$', '', text, flags=re.IGNORECASE)
+    # Strip bracketed status ([DRAFT], [WIP], [v0.4])
+    text = re.sub(r'\s*\[(?:draft|wip|v\d+(\.\d+)*)\]\s*$', '', text, flags=re.IGNORECASE)
+    # Strip trailing markdown emphasis (** at end)
+    text = re.sub(r'\*+\s*$', '', text)
+    # Strip trailing ellipsis — single unicode … OR 3+ ASCII dots
+    text = re.sub(r'(?:…|\.{3,})\s*$', '', text)
+    # Collapse internal whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text[:max_len]
+
+
+async def llm_generate_queries(
+    providers,
+    prompt: str,
+    max_queries: int = SEARCHES_PER_CALL,
+) -> list[str]:
+    """Use the LLM to generate targeted search queries from prompt context.
+
+    Beats the template-based extract_search_queries on niche / non-English /
+    structured-input prompts because the LLM reads the actual agent intent
+    (e.g. "I need to verify Mursion's 2023 layoffs") instead of regex-matching
+    a noisy markdown title. Costs ~$0.001-0.002 per call (MiniMax-M2.7),
+    called once per call_llm_with_search invocation.
+
+    Returns [] on any failure — caller falls back to extract_search_queries.
+    """
+    # Cap input — the LLM only needs the gist, not the full multi-page prompt.
+    # Most agent prompts have the most-relevant intent in the first 2-3K chars
+    # (the task framing, the plan being challenged, the question being asked).
+    excerpt = prompt[:2500]
+    instruction = f"""Generate exactly {max_queries} web search queries for this AI agent task.
+
+GOAL: queries that return SPECIFIC, EVIDENCE-RICH results — competitor pricing pages, annual reports, named failure post-mortems, regulatory documents, specific company URLs, primary sources.
+
+AVOID generic queries like "X SaaS pricing plans", "X tools comparison", "X startup 2025" — those return blog spam.
+
+PREFER:
+- Specific company names ("BTS Group annual report APAC revenue 2023")
+- Regulatory bodies + frameworks ("MAS TRM individual accountability framework")
+- Named failure cases ("Mursion VR layoffs 2023 post-mortem")
+- Concrete pricing lookups ("Capsim corporate per-learner pricing")
+
+Output rules:
+- English only (search engines return better mix that way)
+- 6-15 words per query
+- Output exactly {max_queries} queries, one per line
+- No numbering, no quotes, no commentary, no markdown
+
+AGENT TASK CONTEXT:
+{excerpt}"""
+    try:
+        resp = await providers.llm.call(
+            prompt=instruction,
+            model=providers.model,
+            # 1200 tokens to land in 1 round-trip across both Prove and
+            # Forge prompts — MiniMax CoT preamble eats 400-1000 tokens
+            # before the actual 3-query output; smaller budgets triggered
+            # LiteLLMProvider's adaptive retry doubling, adding latency
+            # to every search call.
+            max_tokens=1200,
+        )
+        text = (resp.content or "").strip()
+        lines: list[str] = []
+        for raw in text.splitlines():
+            line = raw.strip()
+            # Strip numbering, bullets, leading quotes
+            line = re.sub(r'^[\d\.\)\-\*\•\s"\'`]+', '', line).strip()
+            line = line.rstrip('"\'`').strip()
+            # Skip commentary, empty lines, markdown headers, too-short fragments
+            if not line or len(line) < 8 or len(line) > 200:
+                continue
+            if line.startswith('#'):
+                continue
+            lower = line.lower()
+            if lower.startswith(('here', 'these', 'i ', 'note', 'output', 'queries:', 'query:')):
+                continue
+            lines.append(line)
+        if lines:
+            print(f"[QUERY GEN LLM] generated {len(lines)} queries", flush=True)
+            return lines[:max_queries]
+        print(f"[QUERY GEN LLM] no parseable queries, falling back to template", flush=True)
+    except Exception as e:
+        print(f"[QUERY GEN LLM] failed, falling back to template: {type(e).__name__}: {str(e)[:120]}", flush=True)
+    return []
+
+
 def extract_search_queries(prompt: str, max_queries: int = SEARCHES_PER_CALL) -> list[str]:
-    """Build targeted search queries from prompt context to ground the LLM."""
+    """Build targeted search queries from prompt context to ground the LLM.
+
+    Template-based fallback used when llm_generate_queries fails. Less
+    accurate than the LLM path because it relies on regex-matching a
+    domain phrase out of the prompt and then string-templating it into
+    canned query shells — but cheap, deterministic, no extra API call.
+    """
     queries: list[str] = []
 
     # Extract domain/subject — patterns ordered most→least specific.
@@ -49,7 +164,7 @@ def extract_search_queries(prompt: str, max_queries: int = SEARCHES_PER_CALL) ->
     ]:
         m = re.search(pattern, prompt, re.IGNORECASE | re.DOTALL)
         if m:
-            domain = m.group(1).strip()[:80]
+            domain = _clean_domain(m.group(1).strip()[:80])
             if domain:
                 break
 
@@ -57,13 +172,13 @@ def extract_search_queries(prompt: str, max_queries: int = SEARCHES_PER_CALL) ->
         # Forge CONTEXT marker fallback
         m = re.search(r"CONTEXT[^\n]*\n+(?:##[^\n]*\n)*([^\n#{\"]{10,100})", prompt)
         if m:
-            domain = m.group(1).strip()[:80]
+            domain = _clean_domain(m.group(1).strip()[:80])
 
     if not domain:
         # Last resort: first substantive line after any markdown heading
         m = re.search(r"(?:^|\n)(?:#{1,3}\s+[^\n]+\n+)?([A-Z][^\n]{15,100})", prompt)
         if m:
-            domain = m.group(1).strip()[:80]
+            domain = _clean_domain(m.group(1).strip()[:80])
 
     if not domain:
         return []
@@ -153,7 +268,13 @@ async def call_llm_with_search(
                 return await providers.llm.call_with_search(prompt=prompt, model=model, max_tokens=max_tokens)
 
     if providers.search:
-        queries = extract_search_queries(prompt)
+        # LLM-generated queries beat templated ones on niche / non-English /
+        # structured-input prompts (e.g. multi-page markdown ideas, Chinese
+        # domain names, regulator-specific lookups). Falls back to template
+        # if the meta-LLM call fails. ~$0.001-0.002 per call.
+        queries = await llm_generate_queries(providers, prompt)
+        if not queries:
+            queries = extract_search_queries(prompt)
         search_context = ""
 
         if queries:

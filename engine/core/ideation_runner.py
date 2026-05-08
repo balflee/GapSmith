@@ -45,8 +45,85 @@ def _max_tokens_for(model: str | None, base: int) -> int:
 # Search-augmented LLM call
 # ============================================================
 
+def _clean_domain(text: str, max_len: int = 60) -> str:
+    """Strip markdown / version / status noise from extracted domain text.
+
+    Mirrors debate_helpers._clean_domain (kept inline rather than imported
+    to avoid circular-import risk between the two runners). See debate_helpers
+    for the full rationale.
+    """
+    if not text:
+        return ""
+    while text and text[0] in '#*>-`~ \t​':
+        text = text[1:]
+    text = re.sub(r'\s*[—–\-]\s*概念文档\s*v?\d+(\.\d+)*\s*$', '', text)
+    text = re.sub(r'\s*[—–\-]+\s*(?:version\s+|v)\d+(\.\d+)*\s*$', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\s*\[(?:draft|wip|v\d+(\.\d+)*)\]\s*$', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\*+\s*$', '', text)
+    text = re.sub(r'(?:…|\.{3,})\s*$', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text[:max_len]
+
+
+async def _llm_generate_queries(
+    providers, prompt: str, max_queries: int = SEARCHES_PER_CALL,
+) -> list[str]:
+    """Use the LLM to generate targeted search queries from prompt context.
+
+    Mirrors debate_helpers.llm_generate_queries (kept inline rather than
+    imported to avoid circular-import risk). See that function for full
+    rationale and prompt design notes. Returns [] on failure → caller falls
+    back to _extract_search_queries.
+    """
+    excerpt = prompt[:2500]
+    instruction = f"""Generate exactly {max_queries} web search queries for this AI agent task.
+
+GOAL: queries that return SPECIFIC, EVIDENCE-RICH results — competitor pricing pages, annual reports, named failure post-mortems, regulatory documents, specific company URLs, primary sources.
+
+AVOID generic queries like "X SaaS pricing plans", "X tools comparison", "X startup 2025" — those return blog spam.
+
+PREFER:
+- Specific company names ("Notion enterprise pricing tier site:notion.so")
+- Concrete pain-point lookups ("freelance designer client revision complaints reddit")
+- Named failure cases / pricing pages / docs
+
+Output rules:
+- English only (search engines return better mix that way)
+- 6-15 words per query
+- Output exactly {max_queries} queries, one per line
+- No numbering, no quotes, no commentary, no markdown
+
+AGENT TASK CONTEXT:
+{excerpt}"""
+    try:
+        resp = await providers.llm.call(
+            prompt=instruction, model=providers.model, max_tokens=1200,
+        )
+        text = (resp.content or "").strip()
+        lines: list[str] = []
+        for raw in text.splitlines():
+            line = raw.strip()
+            line = re.sub(r'^[\d\.\)\-\*\•\s"\'`]+', '', line).strip()
+            line = line.rstrip('"\'`').strip()
+            if not line or len(line) < 8 or len(line) > 200:
+                continue
+            if line.startswith('#'):
+                continue
+            lower = line.lower()
+            if lower.startswith(('here', 'these', 'i ', 'note', 'output', 'queries:', 'query:')):
+                continue
+            lines.append(line)
+        if lines:
+            print(f"[QUERY GEN LLM] generated {len(lines)} queries", flush=True)
+            return lines[:max_queries]
+        print(f"[QUERY GEN LLM] no parseable queries, falling back to template", flush=True)
+    except Exception as e:
+        print(f"[QUERY GEN LLM] failed, falling back to template: {type(e).__name__}: {str(e)[:120]}", flush=True)
+    return []
+
+
 def _extract_search_queries(prompt: str, max_queries: int = SEARCHES_PER_CALL) -> list[str]:
-    """Build search queries from prompt context to ground LLM output in real data."""
+    """Build search queries from prompt context (template fallback)."""
     queries = []
 
     # 1. Extract the market/domain from context (order matters — most specific first)
@@ -58,26 +135,26 @@ def _extract_search_queries(prompt: str, max_queries: int = SEARCHES_PER_CALL) -
     ]:
         m = re.search(pattern, prompt, re.IGNORECASE)
         if m:
-            domain = m.group(1).strip()[:80]
+            domain = _clean_domain(m.group(1).strip()[:80])
             break
 
     if not domain:
         # Try Scout topic title first (most concise)
         m = re.search(r'"title":\s*"([^"]{10,80})', prompt)
         if m:
-            domain = m.group(1).strip()[:50]
+            domain = _clean_domain(m.group(1).strip()[:50])
 
     if not domain:
         # Try Scout brief overview — extract the subject noun phrase
         m = re.search(r'"overview":\s*"(?:The\s+)?([^"]{5,60}?)(?:\s+(?:is|are|has|was|were|market)\b)', prompt)
         if m:
-            domain = m.group(1).strip()[:50]
+            domain = _clean_domain(m.group(1).strip()[:50])
 
     if not domain:
         # Fallback: first meaningful line after CONTEXT marker (skip JSON/Product Modes)
         m = re.search(r"CONTEXT[^\n]*\n+(?:##[^\n]*\n)*([^\n#{\"]{10,100})", prompt)
         if m:
-            domain = m.group(1).strip()[:80]
+            domain = _clean_domain(m.group(1).strip()[:80])
 
     if not domain:
         return []
@@ -148,8 +225,12 @@ async def _call_llm_with_search(
         return await providers.llm.call_with_search(prompt=prompt, model=model, max_tokens=max_tokens)
 
     if providers.search:
-        # External search via Tavily — search first, inject results
-        queries = _extract_search_queries(prompt)
+        # External search via Tavily — LLM-generated queries beat templated
+        # ones on niche / non-English / structured prompts. ~$0.001-0.002
+        # extra cost; falls back to template on failure.
+        queries = await _llm_generate_queries(providers, prompt)
+        if not queries:
+            queries = _extract_search_queries(prompt)
         search_context = ""
 
         if queries:
