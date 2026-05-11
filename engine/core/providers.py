@@ -7,7 +7,7 @@ works with both CLI (claude subprocess) and Web (LiteLLM + Supabase).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol, runtime_checkable
 
 
@@ -72,14 +72,60 @@ class SearchProvider(Protocol):
     async def search(self, query: str, num_results: int = 5) -> list[SearchResult]: ...
 
 
+# Personas that can have their own LLM in /lab/debate-room. Sub-agents
+# inherit from their parent persona unless explicitly overridden:
+#   trend_scout       → proposer
+#   benchmark_hunter  → analyst
+#   evidence_hunter   → defender
+#   contrarian        → challenger
+#   gap_finder        → challenger
+# Strategist gets its own slot because it does the final synthesis.
+SUB_AGENT_INHERITS = {
+    "trend_scout": "proposer",
+    "benchmark_hunter": "analyst",
+    "evidence_hunter": "defender",
+    "contrarian": "challenger",
+    "gap_finder": "challenger",
+}
+
+
 @dataclass
 class Providers:
-    """Bundle of all provider implementations passed to pipeline runners."""
+    """Bundle of all provider implementations passed to pipeline runners.
+
+    For mixed-LLM debates (/lab/debate-room), `persona_llms` holds one
+    LLMProvider per persona keyed by name (proposer / challenger / analyst
+    / reviewer / defender / strategist + sub-agents). The default `llm` /
+    `model` fields remain the fallback for any persona not in the map —
+    so single-provider Prove debates work unchanged.
+    """
     llm: LLMProvider
     storage: StorageProvider
     search: SearchProvider | None = None
     user_id: str = ""
     model: str = "gpt-5.4"  # user's chosen model
+    # persona name → (provider instance, model id). Empty for normal Prove.
+    persona_llms: dict[str, tuple[LLMProvider, str]] = field(default_factory=dict)
+
+    def for_persona(self, persona: str, fallback: str | None = None) -> "Providers":
+        """Return a Providers view where llm/model are swapped to the
+        persona's configured LLM (or the fallback persona's, or the
+        default). Cheap — just a dataclass replace, not a deep copy.
+
+        Sub-agents should pass their parent persona via fallback, e.g.
+            providers.for_persona("trend_scout", fallback="proposer")
+        which uses trend_scout's specific config if set, else proposer's,
+        else the default llm/model.
+        """
+        if persona in self.persona_llms:
+            llm, model = self.persona_llms[persona]
+            return replace(self, llm=llm, model=model)
+        # Auto-resolve sub-agent inheritance if no explicit fallback given
+        effective_fallback = fallback or SUB_AGENT_INHERITS.get(persona)
+        if effective_fallback and effective_fallback in self.persona_llms:
+            llm, model = self.persona_llms[effective_fallback]
+            return replace(self, llm=llm, model=model)
+        return self
 
 
 # --- Provider capability detection ---

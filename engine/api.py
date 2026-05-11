@@ -70,6 +70,19 @@ class RunProveRequest(BaseModel):
     model: str
     session_config: str = ""
     agent_job_id: str | None = None    # Set when called via /api/v1/prove/debate (agent x402)
+    # Mixed-LLM mode (used by /lab/debate-room): per-persona overrides
+    # keyed by persona name. Each entry: {provider, model, api_key}.
+    # When present, the engine builds a multi-provider Providers bundle
+    # via factory.create_multi_providers and ignores the top-level
+    # provider/model/api_key (those become the default fallback only).
+    # Personas the runner uses: proposer, challenger, analyst, reviewer,
+    # defender, strategist (sub-agents inherit from parent persona).
+    # Empty / None = single-provider Prove (current behavior).
+    model_overrides: dict[str, dict] | None = None
+    # Target table for engine to write progress into. Defaults to
+    # prove_sessions; /lab/debate-room sets this to "lab_sessions" so
+    # multi-LLM runs don't pollute the production Prove dataset.
+    session_table: str = "prove_sessions"
 
 
 # --- Upstream error classification (for quota refund) ---
@@ -366,12 +379,27 @@ async def _run_prove_bg(req: RunProveRequest):
     report to the agent_jobs table so /api/v1/jobs/{id} polling sees state,
     and POSTs to webhook_url (if set) on completion.
     """
-    print(f"[PROVE] session={req.session_id} provider={req.provider} model={req.model} agent_job={req.agent_job_id or '-'}", flush=True)
-    providers = create_providers(
-        api_key=req.api_key, provider=req.provider,
-        model=req.model, user_id=req.user_id,
-        tavily_key=os.environ.get("TAVILY_API_KEY"),
-    )
+    # Mixed-LLM mode: when model_overrides is present, build a multi-provider
+    # bundle so each persona uses its own LLM. Single-provider mode (default
+    # for /prove and /api/v1/prove/debate) takes the original create_providers
+    # path. The session_table param lets /lab/debate-room route progress
+    # writes to lab_sessions instead of prove_sessions.
+    if req.model_overrides:
+        from engine.core.factory import create_multi_providers
+        providers = create_multi_providers(
+            persona_configs=req.model_overrides,
+            user_id=req.user_id,
+            tavily_key=os.environ.get("TAVILY_API_KEY"),
+        )
+        persona_summary = ", ".join(f"{p}={cfg.get('model','?')}" for p, cfg in req.model_overrides.items())
+        print(f"[PROVE/MULTI] session={req.session_id} table={req.session_table} agent_job={req.agent_job_id or '-'} personas=[{persona_summary}]", flush=True)
+    else:
+        print(f"[PROVE] session={req.session_id} provider={req.provider} model={req.model} agent_job={req.agent_job_id or '-'}", flush=True)
+        providers = create_providers(
+            api_key=req.api_key, provider=req.provider,
+            model=req.model, user_id=req.user_id,
+            tavily_key=os.environ.get("TAVILY_API_KEY"),
+        )
 
     last_pct = 0
 
@@ -381,7 +409,7 @@ async def _run_prove_bg(req: RunProveRequest):
             last_pct = pct
         try:
             await providers.storage.update_progress(
-                "prove_sessions", req.session_id, last_pct, message
+                req.session_table, req.session_id, last_pct, message
             )
         except Exception:
             pass
@@ -399,6 +427,7 @@ async def _run_prove_bg(req: RunProveRequest):
             providers=providers,
             on_progress=on_progress,
             session_config=req.session_config,
+            session_table=req.session_table,
         )
 
         # Mirror final result to agent_jobs + fire webhook if x402-paid run.
@@ -426,12 +455,17 @@ async def _run_prove_bg(req: RunProveRequest):
     except Exception as e:
         print(f"[PROVE ERROR] {req.session_id}: {e}", flush=True)
         traceback.print_exc()
-        refunded = await _maybe_refund_quota(providers, req.user_id, "prove", req.agent_job_id, e)
+        # Lab sessions don't consume Prove quota → no refund attempt for them.
+        sku = "prove" if req.session_table == "prove_sessions" else None
+        refunded = (
+            await _maybe_refund_quota(providers, req.user_id, sku, req.agent_job_id, e)
+            if sku else False
+        )
         try:
             await providers.storage.update_progress(
-                "prove_sessions", req.session_id, last_pct, _format_error_msg(e, refunded)
+                req.session_table, req.session_id, last_pct, _format_error_msg(e, refunded)
             )
-            await providers.storage.update_status("prove_sessions", req.session_id, "error")
+            await providers.storage.update_status(req.session_table, req.session_id, "error")
         except Exception:
             pass
         if req.agent_job_id:

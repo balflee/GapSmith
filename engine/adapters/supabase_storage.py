@@ -117,9 +117,12 @@ class SupabaseStorage:
         self, session_id: str, rounds: list, votes: dict, verdict: str, report: dict,
         total_cost_usd: float = 0, total_input_tokens: int = 0,
         total_output_tokens: int = 0, model: str = "",
+        table: str = "prove_sessions",
     ) -> None:
-        """Save Prove-specific results."""
-        self.client.table("prove_sessions").update({
+        """Save final Prove results. `table` defaults to prove_sessions but can
+        be set to "lab_sessions" for /lab/debate-room mixed-LLM runs that
+        share the same row schema but persist to a separate table."""
+        self.client.table(table).update({
             "rounds": rounds,
             "votes": votes,
             "verdict": verdict,

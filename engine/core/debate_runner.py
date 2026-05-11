@@ -103,6 +103,12 @@ async def run_phase_a(state: DebateState, providers: Providers, on_progress=None
     state.current_phase = "A"
     idea = state.idea
 
+    # Mixed-LLM: rebind providers to persona-specific config (no-op for
+    # single-provider Prove). Trend Scout falls back to Proposer's LLM
+    # if not separately configured (most common case).
+    proposer_p = providers.for_persona("proposer")
+    trend_scout_p = providers.for_persona("trend_scout", fallback="proposer")
+
     # Sub-agent: Trend Scout (competitive intelligence)
     prev_proposer = state.get_output(state.current_round - 1, "A", "proposer") if state.current_round > 1 else ""
     summary = (prev_proposer or idea)[:1500]
@@ -111,7 +117,7 @@ async def run_phase_a(state: DebateState, providers: Providers, on_progress=None
     trend_scout_data = ""
     try:
         ts_resp = await helpers.call_sub_agent(
-            providers,
+            trend_scout_p,
             ctx.build_trend_scout_prompt(idea, summary, tags),
             system_prompt=personas.TREND_SCOUT_SYSTEM,
             max_tokens=2048,
@@ -164,7 +170,7 @@ reason_brief: "<one-line reason, <200 chars>"
         proposer_validator = V.validate_proposer
 
     resp = await helpers.call_with_gate(
-        providers, prompt, proposer_validator,
+        proposer_p, prompt, proposer_validator,
         system_prompt=personas.PROPOSER_SYSTEM,
         max_tokens=4096,
         min_length=helpers.MIN_MAIN_AGENT_LEN,
@@ -185,9 +191,14 @@ async def run_phase_a5(state: DebateState, providers: Providers, proposer_output
     """Phase A.5: Reviewer fact-checks Proposer. R2+ includes hallucination correction loop."""
     state.current_phase = "A5"
 
+    # Mixed-LLM: A5 fact-check is the Reviewer persona; the hallucination-
+    # correction step that follows is Proposer fixing their own claims.
+    reviewer_p = providers.for_persona("reviewer")
+    proposer_p = providers.for_persona("proposer")
+
     prompt = ctx.build_phase_a5_prompt(state, None, proposer_output)
     resp = await helpers.call_with_gate(
-        providers, prompt, V.validate_fact_check_reviewer,
+        reviewer_p, prompt, V.validate_fact_check_reviewer,
         system_prompt=personas.REVIEWER_SYSTEM,
         max_tokens=3072,
     )
@@ -201,8 +212,8 @@ async def run_phase_a5(state: DebateState, providers: Providers, proposer_output
         state.hallucination_flags[state.current_round] = flags
         if flags:
             correction_prompt = ctx.build_hallucination_correction_prompt(state, flags)
-            corr_resp = await providers.llm.call(
-                prompt=correction_prompt, model=providers.model,
+            corr_resp = await proposer_p.llm.call(
+                prompt=correction_prompt, model=proposer_p.model,
                 system_prompt=personas.PROPOSER_SYSTEM,
                 max_tokens=2048,
             )
@@ -219,6 +230,10 @@ async def run_phase_a5(state: DebateState, providers: Providers, proposer_output
 
 async def _run_challenger_gated(state: DebateState, providers: Providers) -> str:
     """Challenger Phase B: 3 gated steps."""
+    # Mixed-LLM: shadow providers with Challenger's persona config (no-op
+    # for single-provider Prove). All sub-calls below now use this LLM.
+    providers = providers.for_persona("challenger")
+
     proposer_output = state.get_output(state.current_round, "A", "proposer") or ""
     factcheck = state.get_output(state.current_round, "A5", "reviewer") or ""
 
@@ -351,12 +366,21 @@ as inline citations (`[REF: SEARCH] URL` or bare URL). Unsourced challenges are 
 
 async def _run_analyst_gated(state: DebateState, providers: Providers) -> tuple[str, str]:
     """Analyst Phase B: Benchmark Hunter (parallel) + 3 gated steps. Returns (final_analysis, benchmark_data)."""
+    # Mixed-LLM: Analyst owns 3 main steps; Benchmark Hunter is a sub-agent
+    # that auto-falls back to Analyst's LLM if not separately configured.
+    analyst_p = providers.for_persona("analyst")
+    benchmark_p = providers.for_persona("benchmark_hunter", fallback="analyst")
+
     proposer_output = state.get_output(state.current_round, "A", "proposer") or ""
     idea = state.idea
 
+    # Rebind the parameter name so the rest of the function (which calls
+    # helpers.call_with_gate(providers, ...)) routes to the Analyst LLM.
+    providers = analyst_p
+
     # Sub-agent: Benchmark Hunter (runs in parallel with Step 1)
     benchmark_task = helpers.call_sub_agent(
-        providers,
+        benchmark_p,
         ctx.build_benchmark_hunter_prompt(idea, proposer_output),
         system_prompt=personas.BENCHMARK_HUNTER_SYSTEM,
         max_tokens=2048,
@@ -468,6 +492,10 @@ Return as markdown."""
 
 async def _run_reviewer_gated(state: DebateState, providers: Providers) -> str:
     """Reviewer Phase B assumption attack: 2 gated steps."""
+    # Mixed-LLM: shadow with Reviewer's persona config (no-op for single-
+    # provider Prove). All sub-calls below now use this LLM.
+    providers = providers.for_persona("reviewer")
+
     proposer_output = state.get_output(state.current_round, "A", "proposer") or ""
     analyst_output = state.get_output(state.current_round, "B", "analyst") or ""
 
@@ -541,19 +569,21 @@ async def run_phase_b(state: DebateState, providers: Providers, config: dict | N
     proposer_output = state.get_output(state.current_round, "A", "proposer") or ""
     idea = state.idea
 
-    # Launch all parallel tasks
+    # Launch all parallel tasks. Each persona-owning function rebinds its
+    # own LLM internally; sub-agents (Contrarian, Gap Finder) inherit from
+    # Challenger by default but accept their own model_overrides if set.
     challenger_task = _run_challenger_gated(state, providers)
     analyst_task = _run_analyst_gated(state, providers)
 
     contrarian_task = helpers.call_sub_agent(
-        providers,
+        providers.for_persona("contrarian", fallback="challenger"),
         ctx.build_contrarian_prompt(idea, proposer_output),
         system_prompt=personas.CONTRARIAN_SYSTEM,
         max_tokens=2048,
         validator=V.validate_contrarian,
     )
     gap_finder_task = helpers.call_sub_agent(
-        providers,
+        providers.for_persona("gap_finder", fallback="challenger"),
         ctx.build_gap_finder_prompt(idea, proposer_output),
         system_prompt=personas.GAP_FINDER_SYSTEM,
         max_tokens=2048,
@@ -618,6 +648,14 @@ async def run_phase_c(state: DebateState, providers: Providers, challenges: dict
     state.current_phase = "C"
     idea = state.idea
 
+    # Mixed-LLM: Defender owns the synthesis; Evidence Hunter is a sub-
+    # agent that auto-falls back to Defender's LLM if not configured.
+    defender_p = providers.for_persona("defender")
+    evidence_p = providers.for_persona("evidence_hunter", fallback="defender")
+    # Rebind so the Defender steps below (which still reference `providers`)
+    # route to the Defender LLM.
+    providers = defender_p
+
     proposer_output = state.get_output(state.current_round, "A", "proposer") or ""
     challenger_output = state.get_output(state.current_round, "B", "challenger") or ""
     analyst_output = state.get_output(state.current_round, "B", "analyst") or ""
@@ -632,7 +670,7 @@ async def run_phase_c(state: DebateState, providers: Providers, challenges: dict
     evidence_task = None
     if gap_finder_output:
         evidence_task = helpers.call_sub_agent(
-            providers,
+            evidence_p,
             ctx.build_evidence_hunter_prompt(idea, gap_finder_output),
             system_prompt=personas.EVIDENCE_HUNTER_SYSTEM,
             max_tokens=2048,
@@ -751,16 +789,23 @@ async def run_phase_d(state: DebateState, providers: Providers, config: dict | N
     state.current_phase = "D"
     round_num = state.current_round
 
-    challenger_score_task = providers.llm.call(
-        prompt=ctx.build_challenger_score_prompt(state), model=providers.model,
+    # Mixed-LLM: each voter votes on their own LLM (a Claude Analyst sees
+    # the same evidence but reasons through it differently than a GPT
+    # Analyst — the diversity is the whole point of mixed-LLM debate).
+    challenger_p = providers.for_persona("challenger")
+    analyst_p = providers.for_persona("analyst")
+    reviewer_p = providers.for_persona("reviewer")
+
+    challenger_score_task = challenger_p.llm.call(
+        prompt=ctx.build_challenger_score_prompt(state), model=challenger_p.model,
         system_prompt=personas.CHALLENGER_SYSTEM, max_tokens=1024,
     )
     analyst_vote_task = helpers.collect_vote(
-        providers, ctx.build_binary_vote_prompt(state, "analyst"),
+        analyst_p, ctx.build_binary_vote_prompt(state, "analyst"),
         system_prompt=personas.ANALYST_SYSTEM,
     )
     reviewer_vote_task = helpers.collect_vote(
-        providers, ctx.build_binary_vote_prompt(state, "reviewer"),
+        reviewer_p, ctx.build_binary_vote_prompt(state, "reviewer"),
         system_prompt=personas.REVIEWER_SYSTEM,
     )
 
@@ -819,9 +864,10 @@ async def run_phase_d(state: DebateState, providers: Providers, config: dict | N
     # Strategist arbitration on DEADLOCK
     strategist_vote = None
     if consensus == "DEADLOCK":
+        strategist_p = providers.for_persona("strategist")
         strat_prompt = ctx.build_strategist_arbitration_prompt(state, analyst_vote, reviewer_vote)
         strat_vote_tuple = await helpers.collect_vote(
-            providers, strat_prompt, system_prompt=personas.STRATEGIST_SYSTEM,
+            strategist_p, strat_prompt, system_prompt=personas.STRATEGIST_SYSTEM,
         )
         strategist_vote = strat_vote_tuple[0]
         consensus = cons.evaluate_consensus(
@@ -851,6 +897,10 @@ async def run_phase_d(state: DebateState, providers: Providers, config: dict | N
 async def run_strategist(state: DebateState, providers: Providers) -> dict:
     """2-phase Strategist: Phase 1 analysis (may detect LOGIC_BLOCKED) → Phase 2 plan."""
     state.current_phase = "STRATEGIST"
+
+    # Mixed-LLM: Strategist owns synthesis. Recursive retry path passes
+    # the original `providers` to run_mini_round which itself rebinds.
+    providers = providers.for_persona("strategist")
 
     # Phase 1: Analysis
     p1_prompt = ctx.build_strategist_phase1_prompt(state, None)
@@ -918,6 +968,7 @@ async def run_strategist_rejected(state: DebateState, providers: Providers) -> d
     summary. Output format mirrors the APPROVED path so the split-on-
     `---SUMMARY---` logic at the call site stays unchanged."""
     state.current_phase = "STRATEGIST_REJECTED"
+    providers = providers.for_persona("strategist")
     prompt = ctx.build_strategist_rejected_prompt(state)
     resp = await providers.llm.call(
         prompt=prompt, model=providers.model,
@@ -944,29 +995,38 @@ async def run_mini_round(state: DebateState, providers: Providers, logic_issues:
     """LOGIC_BLOCKED mini-round: Proposer fix → C/A quick eval → Defender → simplified vote."""
     state.current_phase = "MINI_ROUND"
 
+    # Mixed-LLM: each phase uses its own persona's LLM. The persona_llms
+    # map is preserved across for_persona() calls so this works even when
+    # the caller (run_strategist) already shadowed providers to strategist.
+    proposer_p = providers.for_persona("proposer")
+    challenger_p = providers.for_persona("challenger")
+    analyst_p = providers.for_persona("analyst")
+    reviewer_p = providers.for_persona("reviewer")
+    defender_p = providers.for_persona("defender")
+
     # 1. Proposer fix
-    fix_resp = await providers.llm.call(
+    fix_resp = await proposer_p.llm.call(
         prompt=ctx.build_mini_round_proposer_prompt(state, logic_issues),
-        model=providers.model, system_prompt=personas.PROPOSER_SYSTEM, max_tokens=2048,
+        model=proposer_p.model, system_prompt=personas.PROPOSER_SYSTEM, max_tokens=2048,
     )
     proposer_fix = fix_resp.content
 
     # 2. Challenger + Analyst quick evaluation (parallel)
-    chal_task = providers.llm.call(
+    chal_task = challenger_p.llm.call(
         prompt=ctx.build_mini_round_challenge_prompt(state, proposer_fix, logic_issues),
-        model=providers.model, system_prompt=personas.CHALLENGER_SYSTEM, max_tokens=1024,
+        model=challenger_p.model, system_prompt=personas.CHALLENGER_SYSTEM, max_tokens=1024,
     )
-    ana_task = providers.llm.call(
+    ana_task = analyst_p.llm.call(
         prompt=ctx.build_mini_round_challenge_prompt(state, proposer_fix, logic_issues),
-        model=providers.model, system_prompt=personas.ANALYST_SYSTEM, max_tokens=1024,
+        model=analyst_p.model, system_prompt=personas.ANALYST_SYSTEM, max_tokens=1024,
     )
     results = await asyncio.gather(chal_task, ana_task, return_exceptions=True)
     challenges = "\n\n".join(r.content for r in results if not isinstance(r, Exception))
 
     # 3. Defender
-    def_resp = await providers.llm.call(
+    def_resp = await defender_p.llm.call(
         prompt=ctx.build_mini_round_defender_prompt(state, proposer_fix, challenges),
-        model=providers.model, system_prompt=personas.DEFENDER_SYSTEM, max_tokens=2048,
+        model=defender_p.model, system_prompt=personas.DEFENDER_SYSTEM, max_tokens=2048,
     )
 
     # 4. Simplified vote
@@ -983,19 +1043,19 @@ async def run_mini_round(state: DebateState, providers: Providers, logic_issues:
 
 After the logic fix, has market viability improved? Give 1-10 score + reason.
 JSON: {{"score": N, "reason": "..."}}"""
-    c_resp = await providers.llm.call(
-        prompt=c_score_prompt, model=providers.model,
+    c_resp = await challenger_p.llm.call(
+        prompt=c_score_prompt, model=challenger_p.model,
         system_prompt=personas.CHALLENGER_SYSTEM, max_tokens=512,
     )
     challenger_score = cons.parse_challenger_score(c_resp.content)
 
     a_vote_tuple = await helpers.collect_vote(
-        providers,
+        analyst_p,
         f"LOGIC_BLOCKED Mini-Round — Vote\n\n{mini_discussion}\n\nAfter the logic fix, is this worth pursuing?\nPROCEED or REJECT only.\nJSON: {{\"vote\": \"PROCEED|REJECT\", \"reason\": \"...\"}}",
         system_prompt=personas.ANALYST_SYSTEM,
     )
     r_vote_tuple = await helpers.collect_vote(
-        providers,
+        reviewer_p,
         f"LOGIC_BLOCKED Mini-Round — Vote\n\n{mini_discussion}\n\nAfter the logic fix, do core assumptions hold?\nPROCEED or REJECT only.\nJSON: {{\"vote\": \"PROCEED|REJECT\", \"reason\": \"...\"}}",
         system_prompt=personas.REVIEWER_SYSTEM,
     )
@@ -1024,6 +1084,7 @@ JSON: {{"score": N, "reason": "..."}}"""
 
 async def _handle_pivot_out(state: DebateState, providers: Providers, source: str, reason: str) -> str:
     """Generate pivot report and end session as REJECTED."""
+    providers = providers.for_persona("strategist")
     prompt = ctx.build_strategist_pivot_prompt(state, source, reason)
     resp = await providers.llm.call(
         prompt=prompt, model=providers.model,
@@ -1039,13 +1100,41 @@ async def _handle_pivot_out(state: DebateState, providers: Providers, source: st
 # Main orchestration
 # ============================================================
 
-class _TrackingLLM:
-    """Wraps an LLMProvider, auto-accumulating cost/tokens on every call."""
-    def __init__(self, inner):
-        self._inner = inner
+class _CostAccumulator:
+    """Shared sink for cost/token totals across all wrapped LLMs in a debate.
+
+    Mixed-LLM debates use a separate LLMProvider per persona; without a
+    shared accumulator only the default (Proposer) LLM's costs would be
+    counted. Every _TrackingLLM holds a reference to the same _CostAccumulator
+    instance so totals stay correct regardless of how many providers
+    participated in the run."""
+    def __init__(self):
         self.total_cost = 0.0
         self.total_in = 0
         self.total_out = 0
+
+
+class _TrackingLLM:
+    """Wraps an LLMProvider, auto-accumulating cost/tokens into a shared
+    _CostAccumulator. Backward-compatible: if no acc is passed, owns its
+    own accumulator (single-provider Prove path stays unchanged)."""
+    def __init__(self, inner, acc: "_CostAccumulator | None" = None):
+        self._inner = inner
+        self._acc = acc or _CostAccumulator()
+        # Surface accumulator fields directly so existing call-site reads
+        # (tracked.total_cost / total_in / total_out) keep working.
+
+    @property
+    def total_cost(self) -> float:
+        return self._acc.total_cost
+
+    @property
+    def total_in(self) -> int:
+        return self._acc.total_in
+
+    @property
+    def total_out(self) -> int:
+        return self._acc.total_out
 
     # Pass-through attributes (e.g., provider, default_model)
     def __getattr__(self, name):
@@ -1064,9 +1153,9 @@ class _TrackingLLM:
     def _accum(self, resp):
         if resp is None:
             return
-        self.total_cost += getattr(resp, "cost_usd", 0.0) or 0.0
-        self.total_in += getattr(resp, "input_tokens", 0) or 0
-        self.total_out += getattr(resp, "output_tokens", 0) or 0
+        self._acc.total_cost += getattr(resp, "cost_usd", 0.0) or 0.0
+        self._acc.total_in += getattr(resp, "input_tokens", 0) or 0
+        self._acc.total_out += getattr(resp, "output_tokens", 0) or 0
 
 
 def _build_round_entry(state: DebateState, round_num: int, votes: dict | None = None, consensus: str | None = None) -> dict:
@@ -1099,10 +1188,15 @@ async def run_debate(
     session_config: str = "",
     tags: list[str] | None = None,
     config: dict | None = None,
+    session_table: str = "prove_sessions",
 ) -> dict:
     """
     Run Prove multi-agent debate with full CLI parity.
     Returns dict with rounds, votes, verdict, report, costs, model.
+
+    session_table defaults to prove_sessions; /lab/debate-room mixed-LLM
+    runs pass "lab_sessions" so they persist to a separate table without
+    polluting the production Prove dataset.
     """
     state = DebateState(
         session_id=session_id,
@@ -1111,10 +1205,23 @@ async def run_debate(
         tags=tags or [],
     )
 
-    # Wrap llm provider to auto-accumulate cost/tokens
+    # Wrap llm provider to auto-accumulate cost/tokens. Shared accumulator
+    # lets all per-persona LLMs in a mixed-model debate report into the
+    # same total. Single-provider Prove also goes through this path.
+    acc = _CostAccumulator()
     original_llm = providers.llm
-    tracked = _TrackingLLM(original_llm)
+    tracked = _TrackingLLM(original_llm, acc)
     providers.llm = tracked  # type: ignore
+    # Wrap each persona-specific LLM the same way so for_persona() returns
+    # already-tracked instances. dataclass field is mutable; safe to swap.
+    if providers.persona_llms:
+        original_persona_llms = providers.persona_llms
+        providers.persona_llms = {
+            persona: (_TrackingLLM(llm, acc), model)
+            for persona, (llm, model) in original_persona_llms.items()
+        }
+    else:
+        original_persona_llms = None
 
     async def progress(msg: str, pct: int | None = None):
         if on_progress:
@@ -1125,7 +1232,7 @@ async def run_debate(
     strategist_result: dict | None = None
 
     try:
-        await providers.storage.update_status("prove_sessions", session_id, "running")
+        await providers.storage.update_status(session_table, session_id, "running")
         await progress("Starting multi-agent debate...", 3)
 
         for round_num in range(1, MAX_ROUNDS + 1):
@@ -1308,6 +1415,7 @@ async def run_debate(
             total_input_tokens=tracked.total_in,
             total_output_tokens=tracked.total_out,
             model=original_llm.default_model if hasattr(original_llm, "default_model") else providers.model,
+            table=session_table,
         )
 
         await progress(f"Verification complete! Verdict: {verdict}. Cost: ${tracked.total_cost:.2f}", 100)
@@ -1324,10 +1432,14 @@ async def run_debate(
     except Exception:
         traceback.print_exc()
         try:
-            await providers.storage.update_status("prove_sessions", session_id, "error")
+            await providers.storage.update_status(session_table, session_id, "error")
         except Exception:
             pass
         raise
     finally:
-        # Restore original LLM provider reference
+        # Restore original LLM provider references (defensive — providers
+        # is usually a fresh per-request instance, but the caller might
+        # reuse it across runs in tests).
         providers.llm = original_llm  # type: ignore
+        if original_persona_llms is not None:
+            providers.persona_llms = original_persona_llms
