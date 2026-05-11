@@ -565,6 +565,13 @@ function ForgeContent() {
 
       // Subscribe to Supabase Realtime for progress updates
       let lastProgressTime = Date.now();
+      // Heartbeat tracking — Gemini and Claude with native web search can
+      // sit on one phase ("Pain point search...") for 5-10 minutes silently.
+      // Without a heartbeat the activity log shows nothing for that window
+      // and users assume the run is stuck. We append a periodic "still
+      // running" entry instead.
+      let lastHeartbeatShown = Date.now();
+      let currentPhaseLabel = "";
 
       const channel = supabase
         .channel(`forge-progress-${forgeId}`)
@@ -585,6 +592,8 @@ function ForgeContent() {
             };
 
             lastProgressTime = Date.now();
+            lastHeartbeatShown = Date.now();  // reset heartbeat clock on any real update
+            if (row.progress_message) currentPhaseLabel = row.progress_message;
 
             // Update progress
             setProgress(row.progress);
@@ -631,6 +640,22 @@ function ForgeContent() {
           clearInterval(stallCheckRef.current!);
           return;
         }
+
+        // Heartbeat: if no real progress update for >90s and we haven't
+        // shown a "still running" entry in the last 60s, append one. The
+        // engine IS running — just sitting on a long step (Gemini native
+        // search, Claude long-form draft, etc.). Users without this signal
+        // assume the run died.
+        const sinceProgress = Date.now() - lastProgressTime;
+        const sinceHeartbeat = Date.now() - lastHeartbeatShown;
+        if (sinceProgress > 90_000 && sinceHeartbeat > 60_000 && currentPhaseLabel) {
+          const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+          const elapsedMin = Math.max(1, Math.round(sinceProgress / 60_000));
+          const heartbeatMsg = `Still working on "${currentPhaseLabel}" — ${elapsedMin}m+ in. Native-search models (Gemini, Claude) often take 5–10 min per step.`;
+          setLogEntries((prev) => [...prev, { time, msg: heartbeatMsg }]);
+          lastHeartbeatShown = Date.now();
+        }
+
         try {
           const check = await fetch(`/api/forge/${forgeId}`);
           if (!check.ok) return;
@@ -647,6 +672,10 @@ function ForgeContent() {
               if (prev.length > 0 && prev[prev.length - 1].msg === data.progress_message) return prev;
               return [...prev, { time, msg: data.progress_message }];
             });
+            // Reset heartbeat clock — poll just confirmed a real change
+            lastProgressTime = Date.now();
+            lastHeartbeatShown = Date.now();
+            currentPhaseLabel = data.progress_message;
           }
           if (data.rounds && Array.isArray(data.rounds) && data.rounds.length > 0) {
             setRounds(data.rounds);
@@ -1634,7 +1663,10 @@ function ForgeContent() {
                       </span>
                     </div>
                     <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "oklch(0.50 0.02 65)", lineHeight: 1.55 }}>
-                      Ten agents are warming up. Proposer drafts candidates, Defender plays creative coach, plus Trend Scout, Contrarian, Gap Finder, Benchmark Hunter, and Evidence Hunter inject competitive context. First round usually lands in 20–40 seconds.
+                      Ten agents are warming up. Proposer drafts candidates, Defender plays creative coach, plus Trend Scout, Contrarian, Gap Finder, Benchmark Hunter, and Evidence Hunter inject competitive context.
+                    </p>
+                    <p className="mx-auto mt-2 max-w-md text-xs" style={{ color: "oklch(0.55 0.02 65)", lineHeight: 1.55 }}>
+                      First round typically lands in <strong>1–8 minutes</strong> depending on the model — Gemini and Claude with native web search take longer per step than MiniMax. The full session runs ~20–40 minutes end-to-end.
                     </p>
                   </div>
 

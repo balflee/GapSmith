@@ -483,6 +483,14 @@ function ProveContent() {
       const { id: proveId } = await response.json();
       setSessionId(proveId);
 
+      // Heartbeat tracking — Gemini and Claude with native web search can
+      // sit on one phase silently for 5-10 minutes per round phase; without
+      // a heartbeat the activity log shows nothing for that window and
+      // users assume the run is stuck.
+      let lastProgressTime = Date.now();
+      let lastHeartbeatShown = Date.now();
+      let currentPhaseLabel = "";
+
       // Subscribe to Supabase Realtime
       const channel = supabase
         .channel(`prove-progress-${proveId}`)
@@ -497,6 +505,9 @@ function ProveContent() {
           setProgress(row.progress);
           setProgressMessage(row.progress_message);
           if (row.progress_message) {
+            lastProgressTime = Date.now();
+            lastHeartbeatShown = Date.now();
+            currentPhaseLabel = row.progress_message;
             const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
             setLogEntries(prev => {
               if (prev.length > 0 && prev[prev.length - 1].msg === row.progress_message) return prev;
@@ -523,6 +534,19 @@ function ProveContent() {
       // Fallback polling every 10s
       stallCheckRef.current = setInterval(async () => {
         if (!channelRef.current) { clearInterval(stallCheckRef.current!); return; }
+
+        // Heartbeat: if no real progress update for >90s and we haven't
+        // shown a "still running" entry in the last 60s, append one.
+        const sinceProgress = Date.now() - lastProgressTime;
+        const sinceHeartbeat = Date.now() - lastHeartbeatShown;
+        if (sinceProgress > 90_000 && sinceHeartbeat > 60_000 && currentPhaseLabel) {
+          const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+          const elapsedMin = Math.max(1, Math.round(sinceProgress / 60_000));
+          const heartbeatMsg = `Still working on "${currentPhaseLabel}" — ${elapsedMin}m+ in. Native-search models (Gemini, Claude) often take 5–10 min per phase.`;
+          setLogEntries(prev => [...prev, { time, msg: heartbeatMsg }]);
+          lastHeartbeatShown = Date.now();
+        }
+
         try {
           const check = await fetch(`/api/prove/${proveId}`);
           if (!check.ok) return;
@@ -535,6 +559,10 @@ function ProveContent() {
               if (prev.length > 0 && prev[prev.length - 1].msg === data.progress_message) return prev;
               return [...prev, { time, msg: data.progress_message }];
             });
+            // Reset heartbeat clock on any real progress
+            lastProgressTime = Date.now();
+            lastHeartbeatShown = Date.now();
+            currentPhaseLabel = data.progress_message;
           }
           if (data.rounds && Array.isArray(data.rounds) && data.rounds.length > 0) setRounds(data.rounds);
           if (data.status === "error") {
@@ -1222,7 +1250,10 @@ function ProveContent() {
                       </span>
                     </div>
                     <p className="mx-auto mt-2 max-w-md text-sm" style={{ color: "oklch(0.50 0.02 65)", lineHeight: 1.55 }}>
-                      Ten agents are taking their seats. Proposer presents, Challenger attacks viability, Analyst pressure-tests unit economics, Defender steelmans, Reviewer fact-checks every claim — plus five sub-agents (Trend Scout, Contrarian, Gap Finder, Benchmark Hunter, Evidence Hunter) inject competitive context. Round 1 typically opens in 30–60 seconds.
+                      Ten agents are taking their seats. Proposer presents, Challenger attacks viability, Analyst pressure-tests unit economics, Defender steelmans, Reviewer fact-checks every claim — plus five sub-agents (Trend Scout, Contrarian, Gap Finder, Benchmark Hunter, Evidence Hunter) inject competitive context.
+                    </p>
+                    <p className="mx-auto mt-2 max-w-md text-xs" style={{ color: "oklch(0.55 0.02 65)", lineHeight: 1.55 }}>
+                      Round 1 opens in <strong>2–10 minutes</strong> depending on the model — Gemini and Claude with native web search take longer per phase than MiniMax. Full debate runs ~20–60 minutes end-to-end.
                     </p>
                   </div>
 
