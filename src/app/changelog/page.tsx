@@ -37,6 +37,38 @@ interface Entry {
 
 const ENTRIES: Entry[] = [
   {
+    date: "2026-05-12",
+    tag: "feature",
+    title: "/lab/debate-room streams each agent reply as it lands",
+    detail:
+      "Lab debates now render message-by-message in real time — Proposer's bubble appears as soon as their LLM call returns, then Challenger's, then Analyst's — instead of dropping a whole round at once like Prove does. Auto-scrolls; sub-agent tool calls (Trend Scout / Benchmark Hunter / Evidence Hunter) thread indented under their parent persona. A typing pill at the bottom mirrors the engine's progress message so you know who's about to speak. Pivots /lab from \"watch the result\" to \"watch them argue.\"",
+    commit: "303d39d",
+  },
+  {
+    date: "2026-05-12",
+    tag: "fix",
+    title: "Lab debate room polish — clean topic header + actionable errors",
+    detail:
+      "Two annoyances on the live lab page fixed. (1) Pasting a long markdown idea brief no longer dumps the entire wall of text into the sticky header — we extract a real title (strip ##, **, #N: prefixes, cap at 120 chars). (2) When a run fails (OpenAI insufficient_quota, invalid key, model-not-found, rate limit, context overflow), the error card translates the litellm exception into a one-line user fix and names which persona's model triggered it (e.g. \"OpenAI quota exhausted on Challenger + Defender — top up or pick a different provider\"). Raw error stays available behind a collapsible for bug reports.",
+    commit: "0ff03f4",
+  },
+  {
+    date: "2026-05-11",
+    tag: "feature",
+    title: "/lab/debate-room/new — pick a different LLM per persona, BYOK",
+    detail:
+      "The big one: lab debates can now run each of the 6 personas on a different LLM. Claude Opus on Proposer, MiniMax on Challenger, Gemini Pro on Analyst, GPT-5.5 on Defender — or any combination, including all-same-model. Strict BYOK (your keys decrypted in-memory at dispatch, never logged); free for testing (no Prove quota consumed; runs land in a separate lab_sessions table so experiments don't pollute the production dataset). Sticky header shows per-persona model chips while running. Engine reuses the full Prove debate logic — same gates, same verdict YAML, same sub-agents — just with per-persona LLM bindings.",
+    commit: "d7355eb",
+  },
+  {
+    date: "2026-05-11",
+    tag: "fix",
+    title: "Forge + Prove waiting UX — honest time estimates + heartbeat",
+    detail:
+      "Forge previously said \"results in 20–40 seconds\" — accurate for MiniMax, misleading for Claude/Gemini with native search where Round 1 alone can run 1–8 minutes. Now: model-aware time estimate up front, plus a client-side activity heartbeat after 90s of no engine progress so the page never looks frozen during slow LLM calls. No more \"is it stuck or is it thinking?\" tickets.",
+    commit: "878243b",
+  },
+  {
     date: "2026-05-07",
     tag: "fix",
     title: "Upstream LLM 5xx no longer eats your run quota",
