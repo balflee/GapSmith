@@ -146,7 +146,7 @@ export function DebateRoomClient({ session }: { session: ProveSessionData }) {
   }, [speed]);
 
   const verdictEvent = timeline.find((e): e is Extract<TimelineEvent, { kind: "verdict" }> => e.kind === "verdict");
-  const ideaTitle = session.idea.split(" — ")[0] || session.idea.slice(0, 80);
+  const ideaTitle = extractIdeaTitle(session.idea);
   const model = session.report?.model || session.model || "MiniMax-M2.7";
 
   return (
@@ -209,16 +209,23 @@ export function DebateRoomClient({ session }: { session: ProveSessionData }) {
           </div>
         </div>
 
-        {/* Idea + meta */}
+        {/* Idea + meta. The label says "Topic" rather than "Replaying"
+            because this same component renders live lab sessions too,
+            not just the static showcase. The model footer is omitted
+            when LiveDebateRoomClient wraps us — that wrapper shows a
+            richer per-persona model chip strip above this header. */}
         <div className="border-t" style={{ borderColor: BORDER, background: SOFT_BG }}>
-          <div className="mx-auto max-w-3xl px-4 py-2 text-xs">
-            <span style={{ color: MUTED }}>Replaying:</span>{" "}
-            <span className="font-medium" style={{ color: FG }}>{ideaTitle}</span>
-            <span className="mx-2" style={{ color: BORDER }}>·</span>
-            <span style={{ color: MUTED }}>real mainnet session</span>
-            <span className="mx-2" style={{ color: BORDER }}>·</span>
-            <span style={{ color: MUTED }}>all agents on </span>
-            <code className="font-mono text-[10px]" style={{ color: FG }}>{model}</code>
+          <div className="mx-auto max-w-3xl px-4 py-2 text-xs flex items-baseline gap-2 min-w-0">
+            <span className="shrink-0" style={{ color: MUTED }}>Topic:</span>
+            <span
+              className="font-medium truncate min-w-0"
+              style={{ color: FG }}
+              title={session.idea.length > 200 ? session.idea.slice(0, 500) : session.idea}
+            >
+              {ideaTitle}
+            </span>
+            <span className="shrink-0 mx-1" style={{ color: BORDER }}>·</span>
+            <code className="shrink-0 font-mono text-[10px]" style={{ color: FG }}>{model}</code>
           </div>
         </div>
 
@@ -587,4 +594,40 @@ function VerdictBanner({ event }: { event: Extract<TimelineEvent, { kind: "verdi
       </div>
     </div>
   );
+}
+
+/**
+ * Extract a short, clean title from whatever the user typed.
+ *
+ * Users paste anything from a one-line pitch to an entire Top-5 daily
+ * brief in markdown. The previous logic — split(" — ")[0] — silently
+ * returned the WHOLE blob when no separator existed, which dumped a
+ * wall of markdown into the sticky header.
+ *
+ * Strategy: take the first non-empty line, strip leading markdown
+ * markers (`##`, `#1:`, `**...**`), and hard-cap at 120 chars. If
+ * the first line is itself long-form prose (no real title), fall back
+ * to the first sentence — still capped.
+ */
+function extractIdeaTitle(idea: string): string {
+  if (!idea) return "Untitled debate";
+
+  const firstLine = idea.split(/\r?\n/).map(l => l.trim()).find(l => l.length > 0) || idea;
+
+  let s = firstLine
+    .replace(/^#+\s*/, "")              // ## heading
+    .replace(/^#\d+[:.\s]+/, "")         // "#1:" / "#1." numbered-list prefix
+    .replace(/\*\*([^*]+)\*\*/g, "$1")   // **bold**
+    .replace(/__([^_]+)__/g, "$1")       // __bold__
+    .replace(/^[\-*]\s+/, "")            // leading bullet
+    .trim();
+
+  // If the first line is still a wall of prose, prefer the first sentence.
+  if (s.length > 200) {
+    const firstSentence = s.split(/(?<=[.!?])\s+/)[0] || s;
+    s = firstSentence.trim();
+  }
+
+  if (s.length <= 120) return s;
+  return s.slice(0, 117).trimEnd() + "…";
 }
