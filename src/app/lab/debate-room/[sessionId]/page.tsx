@@ -41,7 +41,7 @@ export default async function LiveDebateRoomPage({
   const sb = createServiceRoleClient();
   const { data, error } = await sb
     .from("lab_sessions")
-    .select("id, user_id, idea, persona_models, rounds, votes, verdict, report, status, progress, progress_message, total_cost_usd, model, created_at")
+    .select("id, user_id, idea, persona_models, rounds, votes, verdict, report, status, progress, progress_message, total_cost_usd, model, created_at, live_events")
     .eq("id", sessionId)
     .single();
 

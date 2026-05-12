@@ -187,6 +187,31 @@ class SupabaseStorage:
             print(f"[AGENT_JOB] fail update errored for {job_id}: {e}", flush=True)
             return None
 
+    async def append_live_event(self, table: str, session_id: str, event: dict) -> None:
+        """Atomically append one agent-reply event to lab_sessions.live_events.
+
+        Only lab_sessions carries the column (added in migration 018).
+        Prove sessions intentionally don't stream per-message — they
+        keep the existing batched-round flow — so this call is a no-op
+        for table='prove_sessions'.
+
+        Best-effort: live streaming is UX, not durability. If the RPC
+        errors (network blip, transient timeout), log and continue —
+        the debate must never crash because a telemetry write failed.
+        Note: multiple sub-agents append concurrently in some phases;
+        the RPC is row-locked SECURITY DEFINER so concurrent writes
+        serialize correctly.
+        """
+        if table != "lab_sessions":
+            return
+        try:
+            self.client.rpc("append_live_event", {
+                "p_session_id": session_id,
+                "p_event": event,
+            }).execute()
+        except Exception as e:
+            print(f"[LIVE EVENT] append failed for {session_id}: {e}", flush=True)
+
     async def refund_quota(self, user_id: str, sku: str) -> dict | None:
         """Atomically refund one quota unit (engine calls this on classified
         upstream LLM failure: 503/529/rate-limit/network). Wraps the

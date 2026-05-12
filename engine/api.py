@@ -420,6 +420,20 @@ async def _run_prove_bg(req: RunProveRequest):
             except Exception:
                 pass
 
+    # Live-event streaming hook — lab_sessions only. /prove keeps batched
+    # rounds (the report UI doesn't need per-message streaming and we don't
+    # want to add ~30 extra writes/run to the production path).
+    live_event_emitter = None
+    if req.session_table == "lab_sessions":
+        async def _emit_live(event: dict) -> None:
+            try:
+                await providers.storage.append_live_event(
+                    req.session_table, req.session_id, event,
+                )
+            except Exception:
+                pass  # best-effort; never crash the debate
+        live_event_emitter = _emit_live
+
     try:
         await run_debate(
             session_id=req.session_id,
@@ -428,6 +442,7 @@ async def _run_prove_bg(req: RunProveRequest):
             on_progress=on_progress,
             session_config=req.session_config,
             session_table=req.session_table,
+            live_event_emitter=live_event_emitter,
         )
 
         # Mirror final result to agent_jobs + fire webhook if x402-paid run.

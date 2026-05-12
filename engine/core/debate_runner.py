@@ -1189,6 +1189,7 @@ async def run_debate(
     tags: list[str] | None = None,
     config: dict | None = None,
     session_table: str = "prove_sessions",
+    live_event_emitter=None,
 ) -> dict:
     """
     Run Prove multi-agent debate with full CLI parity.
@@ -1197,12 +1198,18 @@ async def run_debate(
     session_table defaults to prove_sessions; /lab/debate-room mixed-LLM
     runs pass "lab_sessions" so they persist to a separate table without
     polluting the production Prove dataset.
+
+    live_event_emitter: async (event: dict) -> None. When set, fires once
+    per agent reply so the lab room UI can stream messages as they land
+    instead of waiting for whole rounds. None for prove_sessions runs —
+    those keep the batched-round flow.
     """
     state = DebateState(
         session_id=session_id,
         idea=idea,
         session_config=session_config,
         tags=tags or [],
+        live_event_emitter=live_event_emitter,
     )
 
     # Wrap llm provider to auto-accumulate cost/tokens. Shared accumulator

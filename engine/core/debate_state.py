@@ -8,9 +8,11 @@ Persistence to Supabase happens via providers.storage.save_prove_results().
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any, Awaitable, Callable, Optional
 
 
 @dataclass
@@ -60,6 +62,14 @@ class DebateState:
 
     created_at: str = ""
 
+    # Live streaming hook. When set (only by /lab/debate-room runs), every
+    # set_output() / set_sub_agent() call fires this async emitter with the
+    # event payload, so the lab room UI can render each agent message as
+    # soon as the LLM call returns instead of waiting for the round to
+    # finish. Fire-and-forget — never blocks the debate, never crashes it.
+    # Signature: async (event: dict) -> None
+    live_event_emitter: Optional[Callable[[dict], Awaitable[None]]] = None
+
     def __post_init__(self):
         if not self.created_at:
             self.created_at = datetime.now(timezone.utc).isoformat()
@@ -74,6 +84,7 @@ class DebateState:
 
     def set_output(self, round_num: int, phase: str, agent: str, content: str) -> None:
         self.phase_outputs[self._key(round_num, phase, agent)] = content
+        self._emit_live(persona=agent, phase=phase, round_num=round_num, content=content, is_sub_agent=False)
 
     # --- Sub-agent helpers ---
 
@@ -82,6 +93,35 @@ class DebateState:
 
     def set_sub_agent(self, round_num: int, name: str, content: str) -> None:
         self.sub_agent_outputs[(round_num, name)] = content
+        self._emit_live(persona=name, phase="SUB", round_num=round_num, content=content, is_sub_agent=True)
+
+    # --- Live streaming ---
+
+    def _emit_live(self, persona: str, phase: str, round_num: int, content: str, is_sub_agent: bool) -> None:
+        """Fire-and-forget the live emitter if one is wired. Called from
+        the sync set_output / set_sub_agent setters, which themselves run
+        inside the async debate_runner — so an event loop is always live.
+        Failures are swallowed: live streaming is best-effort UX."""
+        if self.live_event_emitter is None or not content:
+            return
+        event = {
+            "persona": persona,
+            "phase": phase,
+            "round": round_num,
+            "markdown": content,
+            "is_sub_agent": is_sub_agent,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.live_event_emitter(event))
+        except RuntimeError:
+            # Called from a sync test context without a running loop —
+            # silently drop. No live UI to update anyway.
+            pass
+        except Exception:
+            # Defensive: anything else also gets swallowed.
+            pass
 
     # --- Discussion helpers ---
 
