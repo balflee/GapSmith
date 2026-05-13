@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -701,6 +701,7 @@ const DEMO_IDEAS: ForgeIdea[] = [
 // --- Main Content ---
 function ForgeReportContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const sessionId = searchParams.get("id");
   const [session, setSession] = useState<ForgeSessionWithCosts | null>(null);
   const [ideas, setIdeas] = useState<ForgeIdea[]>([]);
@@ -726,6 +727,14 @@ function ForgeReportContent() {
           .single();
 
         if (data) {
+          // If the run isn't done yet, the report is empty by definition.
+          // Send the user to /forge?session=<id> for live progress instead
+          // of falling through to the demo-data placeholder.
+          if (data.status && data.status !== "complete") {
+            router.replace(`/forge?session=${sessionId}`);
+            return;
+          }
+
           const sessionData = data as unknown as ForgeSessionWithCosts;
           setSession(sessionData);
           const topIdeas = (sessionData.top_ideas as ForgeIdea[]) || DEMO_IDEAS;

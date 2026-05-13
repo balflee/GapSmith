@@ -361,6 +361,9 @@ function ForgeContent() {
   const logContainerRef = useRef<HTMLDivElement>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
   const stallCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Active session id ref — used by the URL-resume effect to skip
+  // re-attaching to a session we're already watching.
+  const activeForgeIdRef = useRef<string | null>(null);
   const TOTAL_ROUNDS = 5;
 
   // Fetch past forge sessions
@@ -563,151 +566,197 @@ function ForgeContent() {
       const { id: forgeId } = await response.json();
       setSessionId(forgeId);
 
-      // Subscribe to Supabase Realtime for progress updates
-      let lastProgressTime = Date.now();
-      // Heartbeat tracking — Gemini and Claude with native web search can
-      // sit on one phase ("Pain point search...") for 5-10 minutes silently.
-      // Without a heartbeat the activity log shows nothing for that window
-      // and users assume the run is stuck. We append a periodic "still
-      // running" entry instead.
-      let lastHeartbeatShown = Date.now();
-      let currentPhaseLabel = "";
+      // Push id into URL so refresh / tab-restore / "Past Sessions" click
+      // resumes the same in-flight run instead of losing the reference.
+      router.replace(`/forge?session=${forgeId}`, { scroll: false });
 
-      const channel = supabase
-        .channel(`forge-progress-${forgeId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "UPDATE",
-            schema: "public",
-            table: "forge_sessions",
-            filter: `id=eq.${forgeId}`,
-          },
-          (payload: { new: Record<string, unknown> }) => {
-            const row = payload.new as {
-              progress: number;
-              progress_message: string;
-              status: string;
-              rounds: RoundData[] | null;
-            };
-
-            lastProgressTime = Date.now();
-            lastHeartbeatShown = Date.now();  // reset heartbeat clock on any real update
-            if (row.progress_message) currentPhaseLabel = row.progress_message;
-
-            // Update progress
-            setProgress(row.progress);
-            setProgressMessage(row.progress_message);
-
-            // Append to activity log
-            if (row.progress_message) {
-              const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-              setLogEntries((prev) => {
-                // Avoid duplicate consecutive messages
-                if (prev.length > 0 && prev[prev.length - 1].msg === row.progress_message) return prev;
-                return [...prev, { time, msg: row.progress_message }];
-              });
-            }
-
-            // Update rounds from DB (each round is appended as it completes)
-            if (row.rounds && row.rounds.length > 0) {
-              setRounds(row.rounds);
-              setCurrentRound(row.rounds.length);
-            }
-
-            // Terminal states
-            if (row.status === "complete") {
-              setProgress(100);
-              setIsRunning(false);
-              setTimeout(() => router.push(`/forge-report?id=${forgeId}`), 1500);
-              channel.unsubscribe();
-              channelRef.current = null;
-            } else if (row.status === "error") {
-              setError(row.progress_message || "The session encountered an error. Please try again.");
-              setIsRunning(false);
-              channel.unsubscribe();
-              channelRef.current = null;
-            }
-          }
-        )
-        .subscribe();
-
-      channelRef.current = channel;
-
-      // Fallback polling — always poll every 10s to catch updates if Realtime fails
-      stallCheckRef.current = setInterval(async () => {
-        if (!channelRef.current) {
-          clearInterval(stallCheckRef.current!);
-          return;
-        }
-
-        // Heartbeat: if no real progress update for >90s and we haven't
-        // shown a "still running" entry in the last 60s, append one. The
-        // engine IS running — just sitting on a long step (Gemini native
-        // search, Claude long-form draft, etc.). Users without this signal
-        // assume the run died.
-        const sinceProgress = Date.now() - lastProgressTime;
-        const sinceHeartbeat = Date.now() - lastHeartbeatShown;
-        if (sinceProgress > 90_000 && sinceHeartbeat > 60_000 && currentPhaseLabel) {
-          const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-          const elapsedMin = Math.max(1, Math.round(sinceProgress / 60_000));
-          const heartbeatMsg = `Still working on "${currentPhaseLabel}" — ${elapsedMin}m+ in. Native-search models (Gemini, Claude) often take 5–10 min per step.`;
-          setLogEntries((prev) => [...prev, { time, msg: heartbeatMsg }]);
-          lastHeartbeatShown = Date.now();
-        }
-
-        try {
-          const check = await fetch(`/api/forge/${forgeId}`);
-          if (!check.ok) return;
-          const data = await check.json();
-
-          // Update progress from poll if we have progress data
-          if (data.progress !== undefined) {
-            setProgress(data.progress);
-          }
-          if (data.progress_message) {
-            setProgressMessage(data.progress_message);
-            const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-            setLogEntries((prev) => {
-              if (prev.length > 0 && prev[prev.length - 1].msg === data.progress_message) return prev;
-              return [...prev, { time, msg: data.progress_message }];
-            });
-            // Reset heartbeat clock — poll just confirmed a real change
-            lastProgressTime = Date.now();
-            lastHeartbeatShown = Date.now();
-            currentPhaseLabel = data.progress_message;
-          }
-          if (data.rounds && Array.isArray(data.rounds) && data.rounds.length > 0) {
-            setRounds(data.rounds);
-            setCurrentRound(data.rounds.length);
-          }
-
-          // Terminal states
-          if (data.status === "error") {
-            setError(data.progress_message || "The session encountered an error. Please try again.");
-            setIsRunning(false);
-            channel.unsubscribe();
-            channelRef.current = null;
-            clearInterval(stallCheckRef.current!);
-          } else if (data.status === "complete") {
-            setProgress(100);
-            setIsRunning(false);
-            if (data.rounds && Array.isArray(data.rounds)) setRounds(data.rounds);
-            setTimeout(() => router.push(`/forge-report?id=${forgeId}`), 1500);
-            channel.unsubscribe();
-            channelRef.current = null;
-            clearInterval(stallCheckRef.current!);
-          }
-        } catch {
-          // ignore poll errors
-        }
-      }, 10_000);
-
+      watchForgeSession(forgeId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start forge session");
       setIsRunning(false);
     }
   };
+
+  // Subscribe to a Forge session's Realtime + 10s polling fallback.
+  // Extracted from inline handleStart so the URL-resume effect (and the
+  // Past Sessions resume click) reuse the same observer with all its
+  // log dedup, heartbeat, and rounds-tracking logic. Idempotent — calling
+  // it again for a different id tears down the previous subscription.
+  function watchForgeSession(forgeId: string) {
+    channelRef.current?.unsubscribe();
+    if (stallCheckRef.current) clearInterval(stallCheckRef.current);
+    activeForgeIdRef.current = forgeId;
+
+    let lastProgressTime = Date.now();
+    // Heartbeat tracking — Gemini and Claude with native web search can
+    // sit on one phase ("Pain point search...") for 5-10 minutes silently.
+    // Without a heartbeat the activity log shows nothing for that window
+    // and users assume the run is stuck.
+    let lastHeartbeatShown = Date.now();
+    let currentPhaseLabel = "";
+
+    const channel = supabase
+      .channel(`forge-progress-${forgeId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "forge_sessions",
+          filter: `id=eq.${forgeId}`,
+        },
+        (payload: { new: Record<string, unknown> }) => {
+          const row = payload.new as {
+            progress: number;
+            progress_message: string;
+            status: string;
+            rounds: RoundData[] | null;
+          };
+
+          lastProgressTime = Date.now();
+          lastHeartbeatShown = Date.now();
+          if (row.progress_message) currentPhaseLabel = row.progress_message;
+
+          setProgress(row.progress);
+          setProgressMessage(row.progress_message);
+
+          if (row.progress_message) {
+            const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+            setLogEntries((prev) => {
+              if (prev.length > 0 && prev[prev.length - 1].msg === row.progress_message) return prev;
+              return [...prev, { time, msg: row.progress_message }];
+            });
+          }
+
+          if (row.rounds && row.rounds.length > 0) {
+            setRounds(row.rounds);
+            setCurrentRound(row.rounds.length);
+          }
+
+          if (row.status === "complete") {
+            setProgress(100);
+            setIsRunning(false);
+            setTimeout(() => router.push(`/forge-report?id=${forgeId}`), 1500);
+            channel.unsubscribe();
+            channelRef.current = null;
+          } else if (row.status === "error") {
+            setError(row.progress_message || "The session encountered an error. Please try again.");
+            setIsRunning(false);
+            channel.unsubscribe();
+            channelRef.current = null;
+          }
+        }
+      )
+      .subscribe();
+
+    channelRef.current = channel;
+
+    stallCheckRef.current = setInterval(async () => {
+      if (!channelRef.current) {
+        clearInterval(stallCheckRef.current!);
+        return;
+      }
+
+      const sinceProgress = Date.now() - lastProgressTime;
+      const sinceHeartbeat = Date.now() - lastHeartbeatShown;
+      if (sinceProgress > 90_000 && sinceHeartbeat > 60_000 && currentPhaseLabel) {
+        const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        const elapsedMin = Math.max(1, Math.round(sinceProgress / 60_000));
+        const heartbeatMsg = `Still working on "${currentPhaseLabel}" — ${elapsedMin}m+ in. Native-search models (Gemini, Claude) often take 5–10 min per step.`;
+        setLogEntries((prev) => [...prev, { time, msg: heartbeatMsg }]);
+        lastHeartbeatShown = Date.now();
+      }
+
+      try {
+        const check = await fetch(`/api/forge/${forgeId}`);
+        if (!check.ok) return;
+        const data = await check.json();
+
+        if (data.progress !== undefined) {
+          setProgress(data.progress);
+        }
+        if (data.progress_message) {
+          setProgressMessage(data.progress_message);
+          const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+          setLogEntries((prev) => {
+            if (prev.length > 0 && prev[prev.length - 1].msg === data.progress_message) return prev;
+            return [...prev, { time, msg: data.progress_message }];
+          });
+          lastProgressTime = Date.now();
+          lastHeartbeatShown = Date.now();
+          currentPhaseLabel = data.progress_message;
+        }
+        if (data.rounds && Array.isArray(data.rounds) && data.rounds.length > 0) {
+          setRounds(data.rounds);
+          setCurrentRound(data.rounds.length);
+        }
+
+        if (data.status === "error") {
+          setError(data.progress_message || "The session encountered an error. Please try again.");
+          setIsRunning(false);
+          channel.unsubscribe();
+          channelRef.current = null;
+          clearInterval(stallCheckRef.current!);
+        } else if (data.status === "complete") {
+          setProgress(100);
+          setIsRunning(false);
+          if (data.rounds && Array.isArray(data.rounds)) setRounds(data.rounds);
+          setTimeout(() => router.push(`/forge-report?id=${forgeId}`), 1500);
+          channel.unsubscribe();
+          channelRef.current = null;
+          clearInterval(stallCheckRef.current!);
+        }
+      } catch {
+        // ignore poll errors
+      }
+    }, 10_000);
+  }
+
+  // --- Resume from URL ---
+  // ?session=<id> resumes an in-flight run after a refresh, tab-restore,
+  // or "Past Sessions" click. ?from_scout=<id> is a separate, pre-existing
+  // pre-fill mechanism for the form — both can coexist (different keys);
+  // ?session takes priority because it represents a live run.
+  useEffect(() => {
+    const sid = searchParams.get("session");
+    if (!sid) return;
+    if (activeForgeIdRef.current === sid) return;
+
+    let cancelled = false;
+    (async () => {
+      const { data, error: fetchErr } = await supabase
+        .from("forge_sessions")
+        .select("id, status, progress, progress_message, rounds")
+        .eq("id", sid)
+        .maybeSingle();
+      if (cancelled || !data || fetchErr) return;
+
+      if (data.status === "complete") {
+        router.replace(`/forge-report?id=${sid}`);
+        return;
+      }
+      if (data.status === "error") {
+        setError(data.progress_message || "The session ended with an error.");
+        setIsRunning(false);
+        activeForgeIdRef.current = sid;
+        return;
+      }
+
+      // Hydrate visible state, then attach observer.
+      setSessionId(sid);
+      setIsRunning(true);
+      setProgress(data.progress ?? 0);
+      setProgressMessage(data.progress_message ?? "");
+      if (data.rounds && Array.isArray(data.rounds)) {
+        setRounds(data.rounds as RoundData[]);
+        setCurrentRound((data.rounds as RoundData[]).length);
+      }
+      watchForgeSession(sid);
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   return (
     <div className="min-w-0 w-full overflow-x-hidden">
@@ -1274,13 +1323,23 @@ function ForgeContent() {
                     return (
                       <Card
                         key={session.id}
-                        className={`transition-all duration-200 ${isComplete && !isEditing ? "cursor-pointer hover:translate-y-[-1px]" : ""}`}
+                        className={`transition-all duration-200 ${(isComplete || isRunningSession) && !isEditing ? "cursor-pointer hover:translate-y-[-1px]" : ""}`}
                         style={{
                           boxShadow: "0 0 0 1px rgba(0, 0, 0, 0.08)",
                           borderRadius: "8px",
                           border: "none",
                         }}
-                        onClick={() => { if (isComplete && !isEditing) router.push(`/forge-report?id=${session.id}`); }}
+                        onClick={() => {
+                          if (isEditing) return;
+                          if (isComplete) {
+                            router.push(`/forge-report?id=${session.id}`);
+                          } else if (isRunningSession) {
+                            // Resume watching an in-flight run via the
+                            // ?session= effect, which hydrates state and
+                            // re-attaches the Realtime observer.
+                            router.push(`/forge?session=${session.id}`);
+                          }
+                        }}
                       >
                         <CardContent className="flex items-center gap-4 p-4">
                           {/* Status dot */}
@@ -1331,7 +1390,7 @@ function ForgeContent() {
                                       borderRadius: "4px",
                                       fontSize: "10px",
                                     }}>
-                                      {session.status}
+                                      {isRunningSession ? "Click to watch live" : session.status}
                                     </Badge>
                                   )}
                                 </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -144,9 +144,13 @@ function formatErrorMessage(error: string): string {
 
 export default function ScoutPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClient();
   const channelRef = useRef<RealtimeChannel | null>(null);
   const stallCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Tracks the in-flight session id so resume / past-sessions clicks
+  // don't double-subscribe and so the URL stays in sync with React state.
+  const activeReportIdRef = useRef<string | null>(null);
 
   // --- State ---
   const [selectedSectors, setSelectedSectors] = useState<string[]>([]);
@@ -225,6 +229,108 @@ export default function ScoutPage() {
   // --- Estimated cost calculation ---
   const estimatedCost = selectedSectors.length * (MODEL_COSTS[selectedModel]?.costPerSector ?? 1.0);
 
+  // --- Watch a Scout session: subscribe to Realtime UPDATE + 15s stall poll ---
+  // Extracted from inline startScan() so the URL-resume effect (and the
+  // Past Sessions resume click) can reuse the exact same observer logic.
+  // Tear-down on unmount is handled by the existing cleanup in the auth
+  // useEffect (channelRef.current?.unsubscribe()).
+  const watchScoutSession = useCallback((reportId: string) => {
+    // Idempotent: clear any existing channel/poll for a previous session.
+    channelRef.current?.unsubscribe();
+    if (stallCheckRef.current) clearInterval(stallCheckRef.current);
+    activeReportIdRef.current = reportId;
+
+    let lastProgressTime = Date.now();
+
+    const channel = supabase
+      .channel(`scout-progress-${reportId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "scout_reports",
+          filter: `id=eq.${reportId}`,
+        },
+        (payload: { new: Record<string, unknown> }) => {
+          const row = payload.new as {
+            progress: number;
+            progress_message: string;
+            status: string;
+          };
+
+          lastProgressTime = Date.now();
+
+          setProgress(row.progress);
+          setPhaseMessage(row.progress_message);
+
+          if (row.progress_message) {
+            const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+            setLogEntries((prev) => [...prev, { time, msg: row.progress_message }]);
+          }
+
+          // Map engine progress % to UI phase
+          if (row.progress < 35) setPhase("scanning");
+          else if (row.progress < 70) setPhase("scoring");
+          else setPhase("curation");
+
+          // Terminal states
+          if (row.status === "complete") {
+            setPhase("complete");
+            setProgress(100);
+            setTimeout(() => router.push(`/scout-report?id=${reportId}`), 1200);
+            channel.unsubscribe();
+            channelRef.current = null;
+          } else if (row.status === "error") {
+            setPhase("error");
+            setError(row.progress_message || "The scan encountered an error. Please try again.");
+            channel.unsubscribe();
+            channelRef.current = null;
+          }
+        }
+      )
+      .subscribe();
+
+    channelRef.current = channel;
+
+    // Stall detection — poll if no Realtime progress for 60s
+    stallCheckRef.current = setInterval(async () => {
+      if (!channelRef.current) {
+        clearInterval(stallCheckRef.current!);
+        return;
+      }
+      if (Date.now() - lastProgressTime > 60_000) {
+        try {
+          const check = await fetch(`/api/scout/${reportId}`);
+          if (check.ok) {
+            const data = await check.json();
+            if (data.status === "error") {
+              setPhase("error");
+              setError(data.progress_message || "The scan encountered an error. Please try again.");
+              channel.unsubscribe();
+              channelRef.current = null;
+              clearInterval(stallCheckRef.current!);
+            } else if (data.status === "complete") {
+              setPhase("complete");
+              setProgress(100);
+              setTimeout(() => router.push(`/scout-report?id=${reportId}`), 1200);
+              channel.unsubscribe();
+              channelRef.current = null;
+              clearInterval(stallCheckRef.current!);
+            }
+            if (data.progress > 0) {
+              setProgress(data.progress);
+              setPhaseMessage(data.progress_message || "");
+              lastProgressTime = Date.now();
+            }
+          }
+        } catch {
+          // ignore fetch errors
+        }
+      }
+    }, 15_000);
+  }, [router, supabase]);
+
   // --- Start scan ---
   const startScan = useCallback(async () => {
     if (selectedSectors.length < 2) return;
@@ -269,107 +375,63 @@ export default function ScoutPage() {
 
       const { id: reportId } = await response.json();
 
-      // 2. Subscribe to Supabase Realtime for progress updates
-      let lastProgressTime = Date.now();
+      // 2. Push id into URL so refresh / tab-restore / bookmark resumes
+      // the same in-flight run instead of silently losing the reference.
+      router.replace(`/scout?session=${reportId}`, { scroll: false });
 
-      const channel = supabase
-        .channel(`scout-progress-${reportId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "UPDATE",
-            schema: "public",
-            table: "scout_reports",
-            filter: `id=eq.${reportId}`,
-          },
-          (payload: { new: Record<string, unknown> }) => {
-            const row = payload.new as {
-              progress: number;
-              progress_message: string;
-              status: string;
-            };
-
-            lastProgressTime = Date.now();
-
-            // Update progress bar and message
-            setProgress(row.progress);
-            setPhaseMessage(row.progress_message);
-
-            // Append to activity log
-            if (row.progress_message) {
-              const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-              setLogEntries((prev) => [...prev, { time, msg: row.progress_message }]);
-            }
-
-            // Map engine progress % to UI phase
-            if (row.progress < 35) setPhase("scanning");
-            else if (row.progress < 70) setPhase("scoring");
-            else setPhase("curation");
-
-            // Terminal states
-            if (row.status === "complete") {
-              setPhase("complete");
-              setProgress(100);
-              setTimeout(() => router.push(`/scout-report?id=${reportId}`), 1200);
-              channel.unsubscribe();
-              channelRef.current = null;
-            } else if (row.status === "error") {
-              setPhase("error");
-              // Surface the engine's progress_message so the user sees the
-              // actual upstream error (and the [quota_refunded] marker if
-              // applicable) instead of a generic line.
-              setError(row.progress_message || "The scan encountered an error. Please try again.");
-              channel.unsubscribe();
-              channelRef.current = null;
-            }
-          }
-        )
-        .subscribe();
-
-      channelRef.current = channel;
-
-      // 3. Stall detection — poll API if no progress for 60s
-      stallCheckRef.current = setInterval(async () => {
-        if (!channelRef.current) {
-          clearInterval(stallCheckRef.current!);
-          return;
-        }
-        if (Date.now() - lastProgressTime > 60_000) {
-          try {
-            const check = await fetch(`/api/scout/${reportId}`);
-            if (check.ok) {
-              const data = await check.json();
-              if (data.status === "error") {
-                setPhase("error");
-                setError(data.progress_message || "The scan encountered an error. Please try again.");
-                channel.unsubscribe();
-                channelRef.current = null;
-                clearInterval(stallCheckRef.current!);
-              } else if (data.status === "complete") {
-                setPhase("complete");
-                setProgress(100);
-                setTimeout(() => router.push(`/scout-report?id=${reportId}`), 1200);
-                channel.unsubscribe();
-                channelRef.current = null;
-                clearInterval(stallCheckRef.current!);
-              }
-              // still running — update progress from DB
-              if (data.progress > 0) {
-                setProgress(data.progress);
-                setPhaseMessage(data.progress_message || "");
-                lastProgressTime = Date.now();
-              }
-            }
-          } catch {
-            // ignore fetch errors
-          }
-        }
-      }, 15_000);
+      // 3. Subscribe + start watching
+      watchScoutSession(reportId);
     } catch (e) {
       setPhase("error");
       setError(e instanceof Error ? e.message : "An unexpected error occurred");
     }
-  }, [selectedSectors, selectedModel, router, supabase]);
+  }, [selectedSectors, selectedModel, focusKeywords, router, watchScoutSession]);
+
+  // --- Resume from URL ---
+  // Users land here via three paths: fresh load, tab-restore with
+  // ?session=X, or a "Past Sessions" click on a still-running row. In
+  // the last two cases we hydrate state from DB and re-attach the
+  // observer so the page resumes exactly where it left off.
+  useEffect(() => {
+    const sessionId = searchParams.get("session");
+    if (!sessionId) return;
+    if (activeReportIdRef.current === sessionId) return;  // already attached
+
+    let cancelled = false;
+    (async () => {
+      const { data, error: fetchErr } = await supabase
+        .from("scout_reports")
+        .select("id, status, progress, progress_message")
+        .eq("id", sessionId)
+        .maybeSingle();
+      if (cancelled || !data || fetchErr) return;
+
+      // Already finished — go straight to the report.
+      if (data.status === "complete") {
+        router.replace(`/scout-report?id=${sessionId}`);
+        return;
+      }
+      if (data.status === "error") {
+        setPhase("error");
+        setError(data.progress_message || "The scan ended with an error.");
+        activeReportIdRef.current = sessionId;
+        return;
+      }
+
+      // Pending or running — hydrate visible state, then attach observer.
+      // The activity log is necessarily empty here (we missed earlier
+      // progress messages); future Realtime updates will append normally.
+      setProgress(data.progress ?? 0);
+      setPhaseMessage(data.progress_message ?? "");
+      const pct = data.progress ?? 0;
+      if (pct < 35) setPhase("scanning");
+      else if (pct < 70) setPhase("scoring");
+      else setPhase("curation");
+      watchScoutSession(sessionId);
+    })();
+
+    return () => { cancelled = true; };
+  }, [searchParams, supabase, router, watchScoutSession]);
 
   // --- Cancel scan ---
   const cancelScan = useCallback(() => {
@@ -1014,10 +1076,18 @@ export default function ScoutPage() {
                           ) : (
                             <button
                               onClick={() => {
-                                if (isComplete) router.push(`/scout-report?id=${report.id}`);
+                                if (isComplete) {
+                                  router.push(`/scout-report?id=${report.id}`);
+                                } else if (!isError) {
+                                  // Resume watching an in-flight run. The
+                                  // ?session= effect on /scout will fetch the
+                                  // row, hydrate progress, and re-attach the
+                                  // Realtime observer.
+                                  router.push(`/scout?session=${report.id}`);
+                                }
                               }}
                               className="text-left w-full"
-                              disabled={!isComplete}
+                              disabled={isError}
                             >
                               <div className="text-sm font-medium truncate" style={{ color: isComplete ? "oklch(0.24 0.012 65)" : "oklch(0.50 0.02 65)" }}>
                                 {displayLabel}
@@ -1030,9 +1100,14 @@ export default function ScoutPage() {
                                 {report.total_cost_usd > 0 && (
                                   <span className="text-xs text-muted-foreground">${report.total_cost_usd.toFixed(2)}</span>
                                 )}
-                                {!isComplete && (
+                                {!isComplete && !isError && (
+                                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0" style={{ background: "oklch(0.95 0.04 280)", color: "oklch(0.45 0.18 280)" }}>
+                                    Click to watch live
+                                  </Badge>
+                                )}
+                                {isError && (
                                   <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                                    {report.status}
+                                    error
                                   </Badge>
                                 )}
                               </div>

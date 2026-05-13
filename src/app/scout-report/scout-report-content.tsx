@@ -358,6 +358,14 @@ export function ScoutReportContent() {
           return;
         }
 
+        // If the run isn't done yet, the report is empty by definition.
+        // Send the user to the pipeline page (which handles ?session=X)
+        // so they see live progress instead of an empty-state dead end.
+        if (data.status && data.status !== "complete") {
+          router.replace(`/scout?session=${reportId}`);
+          return;
+        }
+
         setReport(data as ScoutReport);
       } catch {
         setError("Failed to load report.");

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -421,6 +421,7 @@ function exportPdf(session: ProveSessionData) {
 // --- Main ---
 function ProveReportContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const sessionId = searchParams.get("id");
   const supabase = createClient();
 
@@ -437,6 +438,13 @@ function ProveReportContent() {
           .eq("id", sessionId)
           .single();
         if (data) {
+          // If the run isn't done yet, the report is empty by definition.
+          // Send the user to /prove?session=<id> for live progress instead
+          // of the empty "No Report Found" card.
+          if (data.status && data.status !== "complete") {
+            router.replace(`/prove?session=${sessionId}`);
+            return;
+          }
           setSession(data as unknown as ProveSessionData);
           trackProveComplete({ verdict: data.verdict, session_id: data.id });
         }

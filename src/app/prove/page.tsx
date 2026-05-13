@@ -277,6 +277,9 @@ function ProveContent() {
   const logContainerRef = useRef<HTMLDivElement>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
   const stallCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Active session id ref — used by the URL-resume effect to skip
+  // re-attaching to a session we're already watching.
+  const activeProveIdRef = useRef<string | null>(null);
   const MAX_ROUNDS = 3;  // matches engine/core/debate_runner.py MAX_ROUNDS
 
   // Load forge ideas for picker
@@ -483,109 +486,158 @@ function ProveContent() {
       const { id: proveId } = await response.json();
       setSessionId(proveId);
 
-      // Heartbeat tracking — Gemini and Claude with native web search can
-      // sit on one phase silently for 5-10 minutes per round phase; without
-      // a heartbeat the activity log shows nothing for that window and
-      // users assume the run is stuck.
-      let lastProgressTime = Date.now();
-      let lastHeartbeatShown = Date.now();
-      let currentPhaseLabel = "";
+      // Push id into URL so refresh / tab-restore / "Past Sessions" click
+      // resumes the same in-flight run instead of losing the reference.
+      router.replace(`/prove?session=${proveId}`, { scroll: false });
 
-      // Subscribe to Supabase Realtime
-      const channel = supabase
-        .channel(`prove-progress-${proveId}`)
-        .on("postgres_changes", {
-          event: "UPDATE", schema: "public", table: "prove_sessions",
-          filter: `id=eq.${proveId}`,
-        }, (payload: { new: Record<string, unknown> }) => {
-          const row = payload.new as {
-            progress: number; progress_message: string; status: string;
-            rounds: RoundData[] | null;
-          };
-          setProgress(row.progress);
-          setProgressMessage(row.progress_message);
-          if (row.progress_message) {
-            lastProgressTime = Date.now();
-            lastHeartbeatShown = Date.now();
-            currentPhaseLabel = row.progress_message;
-            const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-            setLogEntries(prev => {
-              if (prev.length > 0 && prev[prev.length - 1].msg === row.progress_message) return prev;
-              return [...prev, { time, msg: row.progress_message }];
-            });
-          }
-          if (row.rounds && row.rounds.length > 0) setRounds(row.rounds);
-          if (row.status === "complete") {
-            setProgress(100);
-            setIsRunning(false);
-            setTimeout(() => router.push(`/prove-report?id=${proveId}`), 1500);
-            channel.unsubscribe();
-            channelRef.current = null;
-          } else if (row.status === "error") {
-            setError(row.progress_message || "The session encountered an error.");
-            setIsRunning(false);
-            channel.unsubscribe();
-            channelRef.current = null;
-          }
-        }).subscribe();
-
-      channelRef.current = channel;
-
-      // Fallback polling every 10s
-      stallCheckRef.current = setInterval(async () => {
-        if (!channelRef.current) { clearInterval(stallCheckRef.current!); return; }
-
-        // Heartbeat: if no real progress update for >90s and we haven't
-        // shown a "still running" entry in the last 60s, append one.
-        const sinceProgress = Date.now() - lastProgressTime;
-        const sinceHeartbeat = Date.now() - lastHeartbeatShown;
-        if (sinceProgress > 90_000 && sinceHeartbeat > 60_000 && currentPhaseLabel) {
-          const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-          const elapsedMin = Math.max(1, Math.round(sinceProgress / 60_000));
-          const heartbeatMsg = `Still working on "${currentPhaseLabel}" — ${elapsedMin}m+ in. Native-search models (Gemini, Claude) often take 5–10 min per phase.`;
-          setLogEntries(prev => [...prev, { time, msg: heartbeatMsg }]);
-          lastHeartbeatShown = Date.now();
-        }
-
-        try {
-          const check = await fetch(`/api/prove/${proveId}`);
-          if (!check.ok) return;
-          const data = await check.json();
-          if (data.progress !== undefined) setProgress(data.progress);
-          if (data.progress_message) {
-            setProgressMessage(data.progress_message);
-            const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-            setLogEntries(prev => {
-              if (prev.length > 0 && prev[prev.length - 1].msg === data.progress_message) return prev;
-              return [...prev, { time, msg: data.progress_message }];
-            });
-            // Reset heartbeat clock on any real progress
-            lastProgressTime = Date.now();
-            lastHeartbeatShown = Date.now();
-            currentPhaseLabel = data.progress_message;
-          }
-          if (data.rounds && Array.isArray(data.rounds) && data.rounds.length > 0) setRounds(data.rounds);
-          if (data.status === "error") {
-            setError(data.progress_message || "Error");
-            setIsRunning(false);
-            channel.unsubscribe(); channelRef.current = null;
-            clearInterval(stallCheckRef.current!);
-          } else if (data.status === "complete") {
-            setProgress(100);
-            setIsRunning(false);
-            if (data.rounds) setRounds(data.rounds);
-            setTimeout(() => router.push(`/prove-report?id=${proveId}`), 1500);
-            channel.unsubscribe(); channelRef.current = null;
-            clearInterval(stallCheckRef.current!);
-          }
-        } catch { /* ignore poll errors */ }
-      }, 10_000);
-
+      watchProveSession(proveId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start prove session");
       setIsRunning(false);
     }
   };
+
+  // Subscribe to a Prove session: Realtime UPDATE + 10s polling fallback +
+  // heartbeat log lines for long silent phases. Extracted from inline
+  // handleStart so URL-resume + Past Sessions click reuse the same observer.
+  // Idempotent: re-attaching to a different id tears down the previous one.
+  function watchProveSession(proveId: string) {
+    channelRef.current?.unsubscribe();
+    if (stallCheckRef.current) clearInterval(stallCheckRef.current);
+    activeProveIdRef.current = proveId;
+
+    let lastProgressTime = Date.now();
+    let lastHeartbeatShown = Date.now();
+    let currentPhaseLabel = "";
+
+    const channel = supabase
+      .channel(`prove-progress-${proveId}`)
+      .on("postgres_changes", {
+        event: "UPDATE", schema: "public", table: "prove_sessions",
+        filter: `id=eq.${proveId}`,
+      }, (payload: { new: Record<string, unknown> }) => {
+        const row = payload.new as {
+          progress: number; progress_message: string; status: string;
+          rounds: RoundData[] | null;
+        };
+        setProgress(row.progress);
+        setProgressMessage(row.progress_message);
+        if (row.progress_message) {
+          lastProgressTime = Date.now();
+          lastHeartbeatShown = Date.now();
+          currentPhaseLabel = row.progress_message;
+          const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+          setLogEntries(prev => {
+            if (prev.length > 0 && prev[prev.length - 1].msg === row.progress_message) return prev;
+            return [...prev, { time, msg: row.progress_message }];
+          });
+        }
+        if (row.rounds && row.rounds.length > 0) setRounds(row.rounds);
+        if (row.status === "complete") {
+          setProgress(100);
+          setIsRunning(false);
+          setTimeout(() => router.push(`/prove-report?id=${proveId}`), 1500);
+          channel.unsubscribe();
+          channelRef.current = null;
+        } else if (row.status === "error") {
+          setError(row.progress_message || "The session encountered an error.");
+          setIsRunning(false);
+          channel.unsubscribe();
+          channelRef.current = null;
+        }
+      }).subscribe();
+
+    channelRef.current = channel;
+
+    stallCheckRef.current = setInterval(async () => {
+      if (!channelRef.current) { clearInterval(stallCheckRef.current!); return; }
+
+      const sinceProgress = Date.now() - lastProgressTime;
+      const sinceHeartbeat = Date.now() - lastHeartbeatShown;
+      if (sinceProgress > 90_000 && sinceHeartbeat > 60_000 && currentPhaseLabel) {
+        const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        const elapsedMin = Math.max(1, Math.round(sinceProgress / 60_000));
+        const heartbeatMsg = `Still working on "${currentPhaseLabel}" — ${elapsedMin}m+ in. Native-search models (Gemini, Claude) often take 5–10 min per phase.`;
+        setLogEntries(prev => [...prev, { time, msg: heartbeatMsg }]);
+        lastHeartbeatShown = Date.now();
+      }
+
+      try {
+        const check = await fetch(`/api/prove/${proveId}`);
+        if (!check.ok) return;
+        const data = await check.json();
+        if (data.progress !== undefined) setProgress(data.progress);
+        if (data.progress_message) {
+          setProgressMessage(data.progress_message);
+          const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+          setLogEntries(prev => {
+            if (prev.length > 0 && prev[prev.length - 1].msg === data.progress_message) return prev;
+            return [...prev, { time, msg: data.progress_message }];
+          });
+          lastProgressTime = Date.now();
+          lastHeartbeatShown = Date.now();
+          currentPhaseLabel = data.progress_message;
+        }
+        if (data.rounds && Array.isArray(data.rounds) && data.rounds.length > 0) setRounds(data.rounds);
+        if (data.status === "error") {
+          setError(data.progress_message || "Error");
+          setIsRunning(false);
+          channel.unsubscribe(); channelRef.current = null;
+          clearInterval(stallCheckRef.current!);
+        } else if (data.status === "complete") {
+          setProgress(100);
+          setIsRunning(false);
+          if (data.rounds) setRounds(data.rounds);
+          setTimeout(() => router.push(`/prove-report?id=${proveId}`), 1500);
+          channel.unsubscribe(); channelRef.current = null;
+          clearInterval(stallCheckRef.current!);
+        }
+      } catch { /* ignore poll errors */ }
+    }, 10_000);
+  }
+
+  // --- Resume from URL ---
+  // ?session=<id> resumes an in-flight run after a refresh, tab-restore,
+  // or "Past Sessions" click. ?from_forge=<id> is a separate, pre-existing
+  // form pre-fill mechanism — both can coexist.
+  useEffect(() => {
+    const sid = searchParams.get("session");
+    if (!sid) return;
+    if (activeProveIdRef.current === sid) return;
+
+    let cancelled = false;
+    (async () => {
+      const { data, error: fetchErr } = await supabase
+        .from("prove_sessions")
+        .select("id, status, progress, progress_message, rounds")
+        .eq("id", sid)
+        .maybeSingle();
+      if (cancelled || !data || fetchErr) return;
+
+      if (data.status === "complete") {
+        router.replace(`/prove-report?id=${sid}`);
+        return;
+      }
+      if (data.status === "error") {
+        setError(data.progress_message || "The session ended with an error.");
+        setIsRunning(false);
+        activeProveIdRef.current = sid;
+        return;
+      }
+
+      setSessionId(sid);
+      setIsRunning(true);
+      setProgress(data.progress ?? 0);
+      setProgressMessage(data.progress_message ?? "");
+      if (data.rounds && Array.isArray(data.rounds)) {
+        setRounds(data.rounds as RoundData[]);
+      }
+      watchProveSession(sid);
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   return (
     <div className="min-w-0 w-full overflow-x-hidden">
@@ -967,6 +1019,7 @@ function ProveContent() {
                   {pastSessions.map((session) => {
                     const isComplete = session.status === "complete";
                     const isError = session.status === "error";
+                    const isRunningSession = session.status === "running" || session.status === "pending";
                     const isEditing = editingLabel === session.id;
                     const date = new Date(session.created_at);
                     const statusColor = isComplete ? "oklch(0.55 0.16 155)" : isError ? "oklch(0.55 0.2 25)" : "oklch(0.72 0.14 85)";
@@ -988,9 +1041,19 @@ function ProveContent() {
 
                     return (
                       <Card key={session.id}
-                        className={`transition-all duration-200 ${isComplete && !isEditing ? "cursor-pointer hover:translate-y-[-1px]" : ""}`}
+                        className={`transition-all duration-200 ${(isComplete || isRunningSession) && !isEditing ? "cursor-pointer hover:translate-y-[-1px]" : ""}`}
                         style={{ boxShadow: "0 0 0 1px rgba(0, 0, 0, 0.08)", borderRadius: "8px", border: "none" }}
-                        onClick={() => { if (isComplete && !isEditing) router.push(`/prove-report?id=${session.id}`); }}
+                        onClick={() => {
+                          if (isEditing) return;
+                          if (isComplete) {
+                            router.push(`/prove-report?id=${session.id}`);
+                          } else if (isRunningSession) {
+                            // Resume watching an in-flight debate via the
+                            // ?session= effect, which hydrates state and
+                            // re-attaches the Realtime observer.
+                            router.push(`/prove?session=${session.id}`);
+                          }
+                        }}
                       >
                         <CardContent className="flex items-center gap-4 p-4">
                           <div className="shrink-0 w-2.5 h-2.5 rounded-full" style={{ background: statusColor }} />
@@ -1019,7 +1082,9 @@ function ProveContent() {
                                     </Badge>
                                   )}
                                   {!isComplete && (
-                                    <Badge variant="secondary" style={{ background: `${statusColor}15`, color: statusColor, borderRadius: "4px", fontSize: "10px" }}>{session.status}</Badge>
+                                    <Badge variant="secondary" style={{ background: `${statusColor}15`, color: statusColor, borderRadius: "4px", fontSize: "10px" }}>
+                                      {isRunningSession ? "Click to watch live" : session.status}
+                                    </Badge>
                                   )}
                                 </div>
                                 <div className="flex items-center gap-2 text-xs" style={{ color: "oklch(0.48 0.02 65)" }}>
