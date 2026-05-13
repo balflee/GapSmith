@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
@@ -142,7 +142,7 @@ function formatErrorMessage(error: string): string {
   return cleaned.replace(/^Error:\s*/i, "").substring(0, 200) || "Something went wrong during the scan. Please try again.";
 }
 
-export default function ScoutPage() {
+function ScoutContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
@@ -1208,5 +1208,26 @@ export default function ScoutPage() {
         </BlurFade>
       </div>
     </div>
+  );
+}
+
+// Page wrapper with Suspense — required by Next.js whenever the inner
+// component calls useSearchParams(), otherwise the prerender fails with
+// "useSearchParams() should be wrapped in a suspense boundary".
+export default function ScoutPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-background">
+        <div className="mx-auto max-w-[960px] px-6 py-12">
+          <div className="space-y-8">
+            <Skeleton className="h-10 w-64 bg-muted" />
+            <Skeleton className="h-32 w-full bg-muted" />
+            <Skeleton className="h-32 w-full bg-muted" />
+          </div>
+        </div>
+      </div>
+    }>
+      <ScoutContent />
+    </Suspense>
   );
 }
