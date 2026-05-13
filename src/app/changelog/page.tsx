@@ -42,6 +42,7 @@ const ENTRIES: Entry[] = [
     title: "Scout / Forge / Prove: leave the page, come back, runs are still there",
     detail:
       "Pipelines have always run in the background on Railway — but the browser was throwing away the session id when you left, so it felt like restarting. Now: dispatch pushes ?session=<id> into the URL (bookmark-able, refresh-able), \"Past Sessions\" rows for in-flight runs are clickable (\"Click to watch live\"), and stale links to /scout-report?id=X mid-run cleanly redirect to the live progress view instead of dead-ending on \"No Report Found\". Zero engine changes — pure UI wiring.",
+    commit: "edf0a53",
   },
   {
     date: "2026-05-12",
