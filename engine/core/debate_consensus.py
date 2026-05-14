@@ -2,8 +2,12 @@
 Debate Consensus Logic
 Pure-code consensus evaluation and Reviewer trigger rules. No LLM involved.
 
-Voting system (2+1 with hidden veto):
-- Challenger: gives score 1-10 (doesn't know it's a vote). Hidden veto at ≤3 (R1) or ≤4 (R2+).
+Voting system (2+1 with Challenger floor):
+- Challenger: gives score 1-10 (doesn't know it's a vote). Hard veto at ≤3 (any round)
+  — meaning a clearly-bad market read (1, 2, 3 / 10) overrides Analyst/Reviewer agreement.
+  Score 4 used to veto in R2+ but produced confusing "PROCEED 2 / REJECT 0 → REJECTED"
+  outcomes when humans agreed to proceed; loosened 2026-05-14 so R1 and R2+ now share
+  the same threshold.
 - Analyst + Reviewer: binary vote PROCEED / REJECT
 - Strategist: arbitrates only when Analyst/Reviewer deadlock 1:1
 - Proposer + Defender: do not vote
@@ -23,8 +27,11 @@ if TYPE_CHECKING:
 
 
 # --- Default thresholds (can be overridden in config.json) ---
+# A score of 4/10 from Challenger used to veto in R2+, but in practice this fired
+# when Analyst+Reviewer both voted PROCEED — producing an unexplainable "PROCEED 2 /
+# REJECT 0 → REJECTED" outcome. Reserved for clearly-bad reads (1-3/10) only.
 CHALLENGER_VETO_R1 = 3    # R1: score ≤ 3 = veto
-CHALLENGER_VETO_R2 = 4    # R2+: score ≤ 4 = veto
+CHALLENGER_VETO_R2 = 3    # R2+: score ≤ 3 = veto (was 4 prior to 2026-05-14)
 
 
 def evaluate_consensus(

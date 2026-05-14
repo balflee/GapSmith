@@ -131,6 +131,63 @@ export function MarkdownContent({ content }: { content: string }) {
   );
 }
 
+// --- Challenger summary ---
+// Surfaces the Challenger's role in the verdict. Without this, "PROCEED 2 /
+// REJECT 0 → REJECTED" looks like a backend bug — but it's actually the
+// Challenger veto firing (score ≤ 3 at any round). We render the latest
+// round's Challenger score and a VETO badge when relevant, plus a one-line
+// hint so users understand the rule without reading docs.
+//
+// Threshold mirrors engine/core/debate_consensus.py — keep in sync if the
+// engine relaxes/tightens it.
+const CHALLENGER_VETO_THRESHOLD = 3;
+
+function ChallengerSummary({ session, verdict }: { session: ProveSessionData; verdict: string }) {
+  const lastRound = session.rounds && session.rounds.length > 0
+    ? session.rounds[session.rounds.length - 1]
+    : null;
+  if (!lastRound || typeof lastRound.challenger_score !== "number") return null;
+
+  const score = lastRound.challenger_score;
+  const vetoTriggered = score <= CHALLENGER_VETO_THRESHOLD;
+  const decisive = vetoTriggered && verdict === "REJECTED";
+
+  // Tone the score chip: green ≥7, amber 4-6, red ≤3
+  const scoreColor =
+    score >= 7 ? "oklch(0.55 0.16 155)" :
+    score >= 4 ? "oklch(0.60 0.14 85)" :
+    "oklch(0.55 0.2 25)";
+
+  return (
+    <div className="flex flex-col items-center gap-1.5 mt-1">
+      <div className="flex items-center gap-2">
+        <div className="h-3 w-3 rounded-full" style={{ background: scoreColor }} />
+        <span className="text-sm" style={{ color: "oklch(0.45 0.02 65)" }}>
+          CHALLENGER score:{" "}
+          <span className="font-medium tabular-nums" style={{ color: "oklch(0.24 0.012 65)" }}>
+            {score}/10
+          </span>
+        </span>
+        {vetoTriggered && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide" style={{
+            background: "oklch(0.55 0.2 25 / 14%)",
+            color: "oklch(0.55 0.2 25)",
+          }}>
+            Veto triggered
+          </span>
+        )}
+      </div>
+      {decisive && (
+        <p className="text-[11px] max-w-[480px] text-center" style={{ color: "oklch(0.50 0.02 65)", lineHeight: "1.5" }}>
+          The Challenger&apos;s market-viability score (≤ {CHALLENGER_VETO_THRESHOLD}/10) overrides the
+          Analyst+Reviewer vote tally above. The verdict is REJECTED on Challenger&apos;s
+          read of the market, not the binary vote.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // --- Conditions list (replaces wall-of-text) ---
 function ConditionsList({ conditions }: { conditions: string[] }) {
   const [expanded, setExpanded] = useState(false);
@@ -573,7 +630,7 @@ function ProveReportContent() {
               <div className="text-sm max-w-[500px]" style={{ color: "oklch(0.45 0.02 65)", lineHeight: "1.55" }}>
                 {vc.description}
               </div>
-              {/* Vote counts */}
+              {/* Vote counts (Analyst + Reviewer binary tally) */}
               <div className="flex justify-center gap-6 mt-2">
                 {Object.entries(voteCounts).map(([vote, count]) => (
                   <div key={vote} className="flex items-center gap-2">
@@ -586,6 +643,14 @@ function ProveReportContent() {
                   </div>
                 ))}
               </div>
+
+              {/* Challenger score + veto indicator. The Analyst/Reviewer
+                  vote tally above doesn't include the Challenger — they
+                  contribute a 1-10 market-viability score with a hard
+                  veto at ≤ 3. Surfacing this is what makes "PROCEED 2 /
+                  REJECT 0 → REJECTED" outcomes parseable. */}
+              <ChallengerSummary session={session} verdict={verdictKey} />
+
               {/* Conditions */}
               {voteSummary?.conditions?.length > 0 && (
                 <ConditionsList conditions={voteSummary.conditions} />

@@ -37,6 +37,13 @@ interface Entry {
 
 const ENTRIES: Entry[] = [
   {
+    date: "2026-05-14",
+    tag: "fix",
+    title: "Prove: \"PROCEED 2 / REJECT 0 → REJECTED\" no longer happens silently",
+    detail:
+      "Two changes ship together. (1) Engine: Challenger's hidden veto threshold was ≤4/10 in R2+, which fired even when both Analyst and Reviewer voted PROCEED — producing unexplainable REJECTED verdicts. Loosened to ≤3/10 (same as R1), reserving veto for clearly-bad market reads (1-3 / 10). (2) UI: the verdict card now shows the Challenger's score and a \"Veto triggered\" badge when relevant, plus a one-line explainer when the Challenger overrode the binary vote. Existing sessions render correctly after deploy — per-round Challenger score was always in the DB, just never surfaced.",
+  },
+  {
     date: "2026-05-13",
     tag: "feature",
     title: "Scout / Forge / Prove: leave the page, come back, runs are still there",
