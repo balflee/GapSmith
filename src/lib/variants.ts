@@ -4,7 +4,7 @@ export const VARIANTS = [
     headline: "From Market Signal to Validated Startup Idea in 2 Hours",
     subheadline:
       "AI agents scan trends, brainstorm ideas, then debate and stress-test them — so you don't waste months on bad bets.",
-    cta: "Start Finding Gaps",
+    cta: "Start Free Trial",
     promise:
       "Stop guessing. Let a panel of AI agents argue about your idea before you build it.",
     proof:

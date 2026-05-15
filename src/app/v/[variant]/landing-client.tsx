@@ -253,7 +253,7 @@ export default function LandingPage({ variant, tractionSlot }: LandingPageProps)
                   <path d="M8 1L2 4v4c0 3.3 2.6 6.4 6 7 3.4-.6 6-3.7 6-7V4L8 1z" stroke="currentColor" strokeWidth="1.5" fill="none" />
                   <path d="M5.5 8l2 2 3-3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
-                Bring your own API key &mdash; your data stays yours
+                3 free runs to start &mdash; no card, no API key needed
               </div>
             </BlurFade>
 
@@ -783,7 +783,7 @@ export default function LandingPage({ variant, tractionSlot }: LandingPageProps)
                 </ShimmerButton>
               </Link>
               <span className="text-sm text-muted-foreground">
-                One-time purchase &middot; Bring your own API key
+                No credit card &middot; 3 free runs &middot; BYOK after upgrade
               </span>
             </div>
           </BlurFade>
