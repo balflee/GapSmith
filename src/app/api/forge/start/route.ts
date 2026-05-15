@@ -5,6 +5,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import { decrypt } from "@/lib/crypto";
 import { userOwnsSku } from "@/lib/access";
 import { inferProviderFromModel } from "@/lib/model-provider";
+import { isTrialOnly, getTrialKeyset } from "@/lib/trial";
 
 export const startForgeSchema = z.object({
   scout_report_id: z.string().uuid().optional(),
@@ -54,28 +55,52 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { scout_report_id, context, product_modes, model, session_config } = startForgeSchema.parse(body);
 
-    // Pick the BYOK row matching the chosen model's provider so users with
-    // multiple keys (e.g. Claude + OpenAI) get routed correctly.
-    const wantProvider = inferProviderFromModel(model);
-    let keyQuery = supabase
-      .from("api_keys")
-      .select("encrypted_key, provider, model")
-      .eq("user_id", user.id);
-    if (wantProvider) keyQuery = keyQuery.eq("provider", wantProvider);
-    const { data: keyRow } = await keyQuery.limit(1).maybeSingle();
+    // Trial-only users (signed up via /free-trial, never paid) skip the
+    // BYOK lookup entirely and run on the company-funded MiniMax key. See
+    // src/lib/trial.ts for the detection rules.
+    const trialOnly = await isTrialOnly(supabase, user.id);
+    let apiKey: string;
+    let provider: string;
+    let modelToUse: string;
 
-    if (!keyRow) {
-      return NextResponse.json({
-        error: wantProvider
-          ? `No ${wantProvider} API key configured for this model. Go to Settings first.`
-          : "No API key configured. Go to Settings first.",
-        reason: "no_api_key",
-        redirect_to: "/settings",
-        missing_provider: wantProvider,
-      }, { status: 400 });
+    if (trialOnly) {
+      const trialKeys = getTrialKeyset();
+      if (!trialKeys) {
+        return NextResponse.json({
+          error: "Trial mode is not configured on this server. Please configure your own API key in Settings.",
+          reason: "trial_unavailable",
+          redirect_to: "/settings",
+        }, { status: 503 });
+      }
+      apiKey = trialKeys.apiKey;
+      provider = trialKeys.provider;
+      modelToUse = trialKeys.model;
+    } else {
+      // Pick the BYOK row matching the chosen model's provider so users with
+      // multiple keys (e.g. Claude + OpenAI) get routed correctly.
+      const wantProvider = inferProviderFromModel(model);
+      let keyQuery = supabase
+        .from("api_keys")
+        .select("encrypted_key, provider, model")
+        .eq("user_id", user.id);
+      if (wantProvider) keyQuery = keyQuery.eq("provider", wantProvider);
+      const { data: keyRow } = await keyQuery.limit(1).maybeSingle();
+
+      if (!keyRow) {
+        return NextResponse.json({
+          error: wantProvider
+            ? `No ${wantProvider} API key configured for this model. Go to Settings first.`
+            : "No API key configured. Go to Settings first.",
+          reason: "no_api_key",
+          redirect_to: "/settings",
+          missing_provider: wantProvider,
+        }, { status: 400 });
+      }
+
+      apiKey = await decrypt(keyRow.encrypted_key);
+      provider = keyRow.provider;
+      modelToUse = model || keyRow.model || "gpt-5.4";
     }
-
-    const apiKey = await decrypt(keyRow.encrypted_key);
 
     // Build context: product modes + user context or scout report
     const parts: string[] = [];
@@ -134,8 +159,8 @@ export async function POST(request: Request) {
         user_id: user.id,
         context: forgeContext,
         api_key: apiKey,
-        provider: keyRow.provider,
-        model: model || keyRow.model || "gpt-5.4",
+        provider,
+        model: modelToUse,
         session_config: session_config || "",
       }),
     }).catch((err) => {

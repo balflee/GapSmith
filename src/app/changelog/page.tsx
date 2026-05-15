@@ -37,6 +37,13 @@ interface Entry {
 
 const ENTRIES: Entry[] = [
   {
+    date: "2026-05-15",
+    tag: "feature",
+    title: "/free-trial — sign up, verify email, get 3 free runs",
+    detail:
+      "New dedicated landing page for paid acquisition. Email signup + verification → trigger auto-grants 1 Scout + 1 Forge + 1 Prove run, no credit card. Trial runs use a company-funded MiniMax key server-side (no BYOK setup needed for new visitors). After the 3 runs are consumed the existing 402 → /pricing flow takes over. Email verification is now required for all new signups (anti-abuse — no quota until the link is clicked). Existing paid users are unaffected.",
+  },
+  {
     date: "2026-05-14",
     tag: "fix",
     title: "Prove: \"PROCEED 2 / REJECT 0 → REJECTED\" no longer happens silently",
