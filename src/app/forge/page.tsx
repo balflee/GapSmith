@@ -327,6 +327,10 @@ function ForgeContent() {
     extra: "",
   });
   const [selectedModel, setSelectedModel] = useState("gpt-5.4");
+  // Trial users have no api_keys row and are server-side forced to
+  // MiniMax-M2.7. Lock the dropdown so the surfaced model matches what
+  // will actually run.
+  const [isTrial, setIsTrial] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [currentRound, setCurrentRound] = useState(0);
   const [rounds, setRounds] = useState<RoundData[]>([]);
@@ -365,6 +369,22 @@ function ForgeContent() {
   // re-attaching to a session we're already watching.
   const activeForgeIdRef = useRef<string | null>(null);
   const TOTAL_ROUNDS = 5;
+
+  // Trial detection — overrides the model picker to a locked
+  // MiniMax-M2.7 row when the user is on the free trial.
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/quota");
+        if (!r.ok) return;
+        const q = await r.json();
+        if (q.is_trial) {
+          setIsTrial(true);
+          setSelectedModel("MiniMax-M2.7");
+        }
+      } catch { /* non-blocking */ }
+    })();
+  }, []);
 
   // Fetch past forge sessions
   useEffect(() => {
@@ -1183,12 +1203,17 @@ function ForgeContent() {
                 border: "none",
               }}>
                 <CardContent className="flex flex-col gap-6 p-6 sm:flex-row sm:items-center sm:justify-between">
-                  {/* Model select */}
+                  {/* Model select. Locked to MiniMax-M2.7 on the free
+                      trial — see src/lib/trial.ts for engine-side rules. */}
                   <div className="flex-1 space-y-2">
                     <Label className="text-sm font-medium" style={{ color: "oklch(0.45 0.02 65)" }}>
                       LLM Model
                     </Label>
-                    <Select value={selectedModel} onValueChange={(v) => v && setSelectedModel(v)}>
+                    <Select
+                      value={selectedModel}
+                      onValueChange={(v) => v && !isTrial && setSelectedModel(v)}
+                      disabled={isTrial}
+                    >
                       <SelectTrigger className="w-full text-base sm:w-72">
                         <SelectValue placeholder="Select a model" />
                       </SelectTrigger>
@@ -1200,6 +1225,15 @@ function ForgeContent() {
                         ))}
                       </SelectContent>
                     </Select>
+                    {isTrial && (
+                      <p className="text-xs" style={{ color: "oklch(0.48 0.02 65)", lineHeight: 1.55 }}>
+                        Free-trial runs are locked to MiniMax-M2.7 (covered by us).{" "}
+                        <Link href="/pricing" className="font-medium underline" style={{ color: "oklch(0.62 0.155 52)" }}>
+                          Upgrade
+                        </Link>{" "}
+                        to use any model with your own API key.
+                      </p>
+                    )}
                   </div>
 
                   {/* Cost estimate */}

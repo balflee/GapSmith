@@ -244,6 +244,9 @@ function ProveContent() {
   const [overrideForgeContext, setOverrideForgeContext] = useState(false);
   const [loadingForge, setLoadingForge] = useState(true);
   const [selectedModel, setSelectedModel] = useState("gpt-5.4");
+  // Trial users have no api_keys row and are server-side forced to
+  // MiniMax-M2.7. Lock the dropdown to match.
+  const [isTrial, setIsTrial] = useState(false);
   // Project Context (feeds Analyst's lean feasibility math). Default open so
   // users don't forget to fill it — agents otherwise fall back to generic
   // Small Team / $10K / $100K assumptions. Hidden entirely when a Forge idea
@@ -281,6 +284,22 @@ function ProveContent() {
   // re-attaching to a session we're already watching.
   const activeProveIdRef = useRef<string | null>(null);
   const MAX_ROUNDS = 3;  // matches engine/core/debate_runner.py MAX_ROUNDS
+
+  // Trial detection — overrides the model picker to a locked
+  // MiniMax-M2.7 row when the user is on the free trial.
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/quota");
+        if (!r.ok) return;
+        const q = await r.json();
+        if (q.is_trial) {
+          setIsTrial(true);
+          setSelectedModel("MiniMax-M2.7");
+        }
+      } catch { /* non-blocking */ }
+    })();
+  }, []);
 
   // Load forge ideas for picker
   useEffect(() => {
@@ -948,7 +967,11 @@ function ProveContent() {
                 <CardContent className="flex flex-col gap-6 p-6 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex-1 space-y-2">
                     <Label className="text-sm font-medium" style={{ color: "oklch(0.45 0.02 65)" }}>LLM Model</Label>
-                    <Select value={selectedModel} onValueChange={(v) => v && setSelectedModel(v)}>
+                    <Select
+                      value={selectedModel}
+                      onValueChange={(v) => v && !isTrial && setSelectedModel(v)}
+                      disabled={isTrial}
+                    >
                       <SelectTrigger className="w-full text-base sm:w-72"><SelectValue placeholder="Select a model" /></SelectTrigger>
                       <SelectContent>
                         {Object.entries(MODEL_COSTS).map(([key, model]) => (
@@ -956,6 +979,15 @@ function ProveContent() {
                         ))}
                       </SelectContent>
                     </Select>
+                    {isTrial && (
+                      <p className="text-xs" style={{ color: "oklch(0.48 0.02 65)", lineHeight: 1.55 }}>
+                        Free-trial runs are locked to MiniMax-M2.7 (covered by us).{" "}
+                        <Link href="/pricing" className="font-medium underline" style={{ color: "oklch(0.60 0.14 85)" }}>
+                          Upgrade
+                        </Link>{" "}
+                        to use any model with your own API key.
+                      </p>
+                    )}
                   </div>
                   <div className="flex flex-col items-end gap-1">
                     <TooltipProvider><Tooltip><TooltipTrigger>

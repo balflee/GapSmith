@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
@@ -164,6 +165,12 @@ function ScoutContent() {
   const [isLoading, setIsLoading] = useState(true);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
 
+  // Trial users have no api_keys row and are server-side forced to
+  // MiniMax-M2.7 — keep the UI in lockstep so they don't pick "Claude
+  // Opus" expecting it to actually run on Opus. Fetched lazily from
+  // /api/quota on mount.
+  const [isTrial, setIsTrial] = useState(false);
+
   // Past reports
   const [pastReports, setPastReports] = useState<Array<{
     id: string; sectors: string[]; label: string; status: string;
@@ -200,6 +207,19 @@ function ScoutContent() {
         .limit(20);
       if (data) setPastReports(data as typeof pastReports);
       setLoadingReports(false);
+    })();
+    // Trial detection — flip the model dropdown to a locked MiniMax-M2.7
+    // pill when the user is on the free trial.
+    (async () => {
+      try {
+        const r = await fetch("/api/quota");
+        if (!r.ok) return;
+        const q = await r.json();
+        if (q.is_trial) {
+          setIsTrial(true);
+          setSelectedModel("MiniMax-M2.7");
+        }
+      } catch { /* non-blocking */ }
     })();
     return () => {
       channelRef.current?.unsubscribe();
@@ -879,7 +899,11 @@ function ScoutContent() {
               }}
             >
               <CardContent className="flex flex-col gap-6 p-6 sm:flex-row sm:items-center sm:justify-between">
-                {/* Model select */}
+                {/* Model select. On the free trial the dropdown is locked
+                    to MiniMax-M2.7 — the engine's BYOK lookup is skipped
+                    server-side for trial users (src/lib/trial.ts), so
+                    surfacing a Claude/GPT option here would mislead
+                    them into thinking they could pick a frontier model. */}
                 <div className="flex-1 space-y-2">
                   <label
                     className="text-sm font-medium text-muted-foreground"
@@ -887,7 +911,11 @@ function ScoutContent() {
                   >
                     LLM Model
                   </label>
-                  <Select value={selectedModel} onValueChange={(v) => v && setSelectedModel(v)}>
+                  <Select
+                    value={selectedModel}
+                    onValueChange={(v) => v && !isTrial && setSelectedModel(v)}
+                    disabled={isTrial}
+                  >
                     <SelectTrigger className="w-full text-base sm:w-72">
                       <SelectValue placeholder="Select a model" />
                     </SelectTrigger>
@@ -899,6 +927,15 @@ function ScoutContent() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {isTrial && (
+                    <p className="text-xs" style={{ color: "oklch(0.50 0.02 65)", lineHeight: 1.55 }}>
+                      Free-trial runs are locked to MiniMax-M2.7 (covered by us).{" "}
+                      <Link href="/pricing" className="font-medium underline" style={{ color: "oklch(0.55 0.16 155)" }}>
+                        Upgrade
+                      </Link>{" "}
+                      to use any model with your own API key.
+                    </p>
+                  )}
                 </div>
 
                 {/* Cost estimate */}

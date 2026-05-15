@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { isTrialOnly } from "@/lib/trial";
 
 /**
  * GET /api/quota
@@ -9,8 +10,14 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
  * {
  *   "scout": { used: 3, total: 12, remaining: 9, period_end: "...", has_quota: true },
  *   "forge": { used: 1, total: 6, ... },
- *   "prove": { used: 0, total: 4, ... }
+ *   "prove": { used: 0, total: 4, ... },
+ *   "is_trial": false
  * }
+ *
+ * `is_trial` is true when every purchase the user has is a payment_method
+ * = 'trial' row (i.e. they came in via /free-trial and haven't upgraded).
+ * Used by the pipeline pages to lock the model dropdown to MiniMax-M2.7
+ * and by Settings to grey out the BYOK form — see src/lib/trial.ts.
  *
  * For SKUs with multiple active counters (e.g. user bought both bundle and
  * scout separately), totals are summed. Remaining = total - used. period_end
@@ -38,9 +45,12 @@ export async function GET() {
     scout: empty("scout"),
     forge: empty("forge"),
     prove: empty("prove"),
+    is_trial: false,
   };
 
   if (!user) return NextResponse.json(result);
+
+  result.is_trial = await isTrialOnly(supabase, user.id);
 
   const { data: rows, error } = await supabase
     .from("usage_counters")
@@ -53,11 +63,14 @@ export async function GET() {
     return NextResponse.json(result);
   }
 
+  type Sku = "scout" | "forge" | "prove";
   type Row = { sku: string; used_count: number; quota_total: number; period_end: string };
+  const skuSlots: Record<Sku, typeof result.scout> = {
+    scout: result.scout, forge: result.forge, prove: result.prove,
+  };
   for (const r of (rows ?? []) as Row[]) {
-    const sku = r.sku as keyof typeof result;
-    if (!result[sku]) continue;
-    const slot = result[sku];
+    const slot = skuSlots[r.sku as Sku];
+    if (!slot) continue;
     slot.used += r.used_count;
     slot.total += r.quota_total;
     slot.has_quota = true;
@@ -65,8 +78,8 @@ export async function GET() {
       slot.period_end = r.period_end;
     }
   }
-  for (const sku of ["scout", "forge", "prove"] as const) {
-    result[sku].remaining = Math.max(0, result[sku].total - result[sku].used);
+  for (const slot of Object.values(skuSlots)) {
+    slot.remaining = Math.max(0, slot.total - slot.used);
   }
 
   return NextResponse.json(result);

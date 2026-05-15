@@ -186,6 +186,11 @@ export default function SettingsPage() {
   const [loadingKeys, setLoadingKeys] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // Trial users don't need a BYOK key — runs use the company-funded
+  // MiniMax key server-side. Grey out the form so the trial UX doesn't
+  // tell them to do something pointless.
+  const [isTrial, setIsTrial] = useState(false);
+
   // Add form state
   const [showAddForm, setShowAddForm] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<string>("");
@@ -218,6 +223,15 @@ export default function SettingsPage() {
   useEffect(() => {
     setIsMounted(true);
     fetchKeys();
+    // Pull is_trial alongside; non-blocking.
+    (async () => {
+      try {
+        const r = await fetch("/api/quota");
+        if (!r.ok) return;
+        const q = await r.json();
+        if (q.is_trial) setIsTrial(true);
+      } catch { /* non-blocking */ }
+    })();
   }, [fetchKeys]);
 
   // Reset form fields when provider changes
@@ -393,7 +407,58 @@ export default function SettingsPage() {
             ================================================================ */}
         <div className="lg:col-span-3 space-y-6">
 
-          {/* ---- Saved Keys List ---- */}
+          {/* ---- Trial banner ----
+              Free-trial users run on our MiniMax key server-side, so the
+              BYOK form is dead weight for them. Grey-out + explanation
+              prevents the "I added a key but it's still using MiniMax?!"
+              support ticket. */}
+          {isTrial && (
+            <BlurFade delay={0.08}>
+              <div
+                className="rounded-lg p-4 flex gap-3"
+                style={{
+                  background: "oklch(0.97 0.04 155 / 0.6)",
+                  boxShadow: "inset 0 0 0 1px oklch(0.55 0.16 155 / 0.25)",
+                }}
+              >
+                <div
+                  className="shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-full text-base"
+                  style={{
+                    background: "oklch(0.55 0.16 155 / 0.15)",
+                    color: "oklch(0.40 0.16 155)",
+                  }}
+                  aria-hidden
+                >
+                  ✦
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold mb-0.5" style={{ color: "oklch(0.30 0.015 65)" }}>
+                    You&apos;re on the free trial
+                  </div>
+                  <p className="text-xs" style={{ color: "oklch(0.45 0.02 65)", lineHeight: 1.55 }}>
+                    Your trial runs use our MiniMax-M2.7 key — no API key setup needed.
+                    Adding your own key here won&apos;t take effect until you{" "}
+                    <Link href="/pricing" className="font-medium underline" style={{ color: "oklch(0.40 0.16 155)" }}>
+                      upgrade to a paid tier
+                    </Link>
+                    , at which point you can BYOK any provider.
+                  </p>
+                </div>
+              </div>
+            </BlurFade>
+          )}
+
+          {/* ---- Saved Keys List ----
+              Wrapper visually de-emphasizes the BYOK section for trial users
+              (50% opacity + slight blur) without disabling clicks — power
+              users can still set up keys preemptively for after upgrade. */}
+          <div
+            style={isTrial ? {
+              opacity: 0.55,
+              filter: "saturate(0.7)",
+              transition: "opacity 200ms",
+            } : undefined}
+          >
           {loadingKeys ? (
             <div className="space-y-3">
               {[0, 1].map((i) => (
@@ -787,6 +852,7 @@ export default function SettingsPage() {
               </Card>
             </BlurFade>
           )}
+          </div>{/* /trial grey-out wrapper */}
 
           {/* ---- Forward navigation CTA (shown when any key is saved) ---- */}
           {savedKeys.length > 0 && !showAddForm && (
