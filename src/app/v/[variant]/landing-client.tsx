@@ -219,7 +219,7 @@ export default function LandingPage({ variant, tractionSlot }: LandingPageProps)
 
             <BlurFade delay={0.5} inView>
               <div className="mt-10 flex flex-wrap items-center gap-4">
-                <Link href="/signup" onClick={handleCtaClick}>
+                <Link href="/free-trial" onClick={handleCtaClick}>
                   <ShimmerButton
                     shimmerColor="oklch(0.78 0.155 75)"
                     background="oklch(0.78 0.155 75)"

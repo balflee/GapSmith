@@ -10,6 +10,7 @@ const COLS: Array<{ heading: string; links: Array<{ href: string; label: string;
   {
     heading: "Product",
     links: [
+      { href: "/free-trial", label: "Free Trial", tag: "FREE" },
       { href: "/scout", label: "Scout" },
       { href: "/forge", label: "Forge" },
       { href: "/prove", label: "Prove" },

@@ -1167,6 +1167,27 @@ export default function PricingPage() {
               Pay with USDC on Solana — instant, irreversible, no chargebacks. Bonding curve rewards early believers: each {STEP_SIZE} purchases, the price steps up. Lock in your tier today.
             </p>
           </BlurFade>
+
+          {/* Try-before-you-buy pill. Lets pricing visitors who aren't ready
+              to commit yet detour through /free-trial — same product, just
+              capped to 1 run per pipeline, no card. */}
+          <BlurFade delay={0.28} inView>
+            <div className="mt-7 flex justify-center">
+              <Link
+                href="/free-trial"
+                className="group inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition-all duration-200"
+                style={{
+                  background: "oklch(0.97 0.04 155 / 0.7)",
+                  color: "oklch(0.40 0.16 155)",
+                  boxShadow: "inset 0 0 0 1px oklch(0.55 0.16 155 / 0.25)",
+                }}
+              >
+                <span aria-hidden style={{ fontSize: "12px" }}>✦</span>
+                New here? Get 3 free runs first — no card
+                <span aria-hidden className="transition-transform duration-200 group-hover:translate-x-0.5">→</span>
+              </Link>
+            </div>
+          </BlurFade>
         </div>
       </section>
 

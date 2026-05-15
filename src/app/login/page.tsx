@@ -456,11 +456,14 @@ function LoginForm() {
       <BlurFade delay={0.16} duration={0.5}>
         <p className="mt-6 text-center text-sm text-muted-foreground" style={{ lineHeight: "1.55" }}>
           Don&apos;t have an account?{" "}
+          {/* Send net-new visitors to /free-trial (the conversion-optimized
+              landing page that pre-grants 3 free runs on email confirm).
+              Plain /signup is still reachable but no longer the CTA. */}
           <Link
-            href="/signup"
-            className="text-primary underline decoration-primary/30 underline-offset-4 transition-colors hover:decoration-primary"
+            href="/free-trial"
+            className="text-primary underline decoration-primary/30 underline-offset-4 transition-colors hover:decoration-primary font-medium"
           >
-            Sign up
+            Get 3 free runs →
           </Link>
         </p>
       </BlurFade>
