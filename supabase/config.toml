@@ -235,26 +235,42 @@ otp_length = 6
 # Number of seconds before the email OTP expires (defaults to 1 hour).
 otp_expiry = 3600
 
-# Use a production-ready SMTP server
-# [auth.email.smtp]
-# enabled = true
-# host = "smtp.sendgrid.net"
-# port = 587
-# user = "apikey"
-# pass = "env(SENDGRID_API_KEY)"
-# admin_email = "admin@email.com"
-# sender_name = "Admin"
+# Resend SMTP relay — replaces Supabase's default branded email
+# (noreply@mail.app.supabase.io) with mail from our own verified domain.
+# RESEND_API_KEY is provisioned in Railway; we re-use it on the Supabase
+# side for SMTP auth. Resend's SMTP user is the literal string "resend".
+[auth.email.smtp]
+enabled = true
+host = "smtp.resend.com"
+port = 465
+user = "resend"
+pass = "env(RESEND_API_KEY)"
+admin_email = "gapsmith@draftlabs.org"
+sender_name = "GapSmith"
 
-# Uncomment to customize email template
-# [auth.email.template.invite]
-# subject = "You have been invited"
-# content_path = "./supabase/templates/invite.html"
+# Branded HTML templates for all 5 auth emails. Each file uses inline
+# styling (Gmail strips <style> blocks) with the brand patina/ember
+# gradient and a single CTA button. Text fallback is auto-generated from
+# the HTML by the SMTP server.
+[auth.email.template.confirmation]
+subject = "Confirm your email & unlock 3 free runs"
+content_path = "./supabase/templates/confirmation.html"
 
-# Uncomment to customize notification email template
-# [auth.email.notification.password_changed]
-# enabled = true
-# subject = "Your password has been changed"
-# content_path = "./templates/password_changed_notification.html"
+[auth.email.template.recovery]
+subject = "Reset your GapSmith password"
+content_path = "./supabase/templates/recovery.html"
+
+[auth.email.template.magic_link]
+subject = "Your GapSmith sign-in link"
+content_path = "./supabase/templates/magic_link.html"
+
+[auth.email.template.invite]
+subject = "You're invited to GapSmith"
+content_path = "./supabase/templates/invite.html"
+
+[auth.email.template.email_change]
+subject = "Confirm your new email — GapSmith"
+content_path = "./supabase/templates/email_change.html"
 
 [auth.sms]
 # Allow/disallow new user signups via SMS to your project.
