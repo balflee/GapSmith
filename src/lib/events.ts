@@ -1,5 +1,29 @@
 import { track } from "./analytics";
 
+// Google Ads conversion labels. The base AW-* tag is installed sitewide
+// in src/app/layout.tsx; this fires the per-event conversion ping that
+// tells Google Ads which sessions actually converted (so Smart Bidding
+// can optimize for high-intent traffic instead of guessing on CPC).
+const GOOGLE_ADS_CONVERSION_TRIAL_ACTIVATED = "AW-18052705807/YcjuCIPWy64cEI_cmaBD";
+
+// Window typing for gtag (declared globally in layout.tsx as
+// "afterInteractive"; may be absent in dev or before the script lands).
+declare global {
+  interface Window {
+    gtag?: (...args: unknown[]) => void;
+    dataLayer?: unknown[];
+  }
+}
+
+function fireGoogleAdsConversion(sendTo: string, value: number = 5.0) {
+  if (typeof window === "undefined" || !window.gtag) return;
+  window.gtag("event", "conversion", {
+    send_to: sendTo,
+    value,
+    currency: "USD",
+  });
+}
+
 // --- Event funnel stage map (generated from experiment/EVENTS.yaml) ---
 
 export const EVENT_FUNNEL_MAP: Record<string, string> = {
@@ -58,9 +82,13 @@ export function trackApiKeySaved(props: { provider: string; model?: string }) {
 /** Fires once per trial user, the first time they land on /scout after
  *  confirming their email. The clean conversion point for the
  *  /free-trial → email-verify → activation funnel; better than using a
- *  /scout pageview as proxy (which fires for every visit). */
+ *  /scout pageview as proxy (which fires for every visit).
+ *
+ *  Also fires the Google Ads "Free Trial Activated" conversion so
+ *  Smart Bidding can optimize toward sessions that actually convert. */
 export function trackTrialActivated(props?: { method?: string }) {
   track("trial_activated", { ...props, funnel_stage: "activate" });
+  fireGoogleAdsConversion(GOOGLE_ADS_CONVERSION_TRIAL_ACTIVATED, 5.0);
 }
 
 export function trackScoutStart(props?: { sector_count?: number }) {
