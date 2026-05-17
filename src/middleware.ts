@@ -5,6 +5,7 @@ const publicPaths = [
   "/",
   "/login",
   "/signup",
+  "/free-trial",  // ← paid-acquisition LP; Google Ads visitors are unauth by definition
   "/pricing",
   "/terms",
   "/contact",
