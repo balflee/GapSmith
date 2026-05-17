@@ -8,6 +8,7 @@ export const EVENT_FUNNEL_MAP: Record<string, string> = {
   signup_start: "demand",
   signup_complete: "demand",
   api_key_saved: "activate",
+  trial_activated: "activate",
   scout_start: "activate",
   scout_complete: "activate",
   forge_start: "activate",
@@ -52,6 +53,14 @@ export function trackSignupComplete(props: { method: string }) {
 
 export function trackApiKeySaved(props: { provider: string; model?: string }) {
   track("api_key_saved", { ...props, funnel_stage: "activate" });
+}
+
+/** Fires once per trial user, the first time they land on /scout after
+ *  confirming their email. The clean conversion point for the
+ *  /free-trial → email-verify → activation funnel; better than using a
+ *  /scout pageview as proxy (which fires for every visit). */
+export function trackTrialActivated(props?: { method?: string }) {
+  track("trial_activated", { ...props, funnel_stage: "activate" });
 }
 
 export function trackScoutStart(props?: { sector_count?: number }) {

@@ -29,7 +29,7 @@ import { TextAnimate } from "@/components/ui/text-animate";
 import { Ripple } from "@/components/ui/ripple";
 import { Marquee } from "@/components/ui/marquee";
 import { Meteors } from "@/components/ui/meteors";
-import { trackScoutStart } from "@/lib/events";
+import { trackScoutStart, trackTrialActivated } from "@/lib/events";
 import { createClient } from "@/lib/supabase";
 
 // --- Sector data ---
@@ -218,6 +218,14 @@ function ScoutContent() {
         if (q.is_trial) {
           setIsTrial(true);
           setSelectedModel("MiniMax-M2.7");
+          // Trial-activation conversion event — fires exactly once per
+          // user (deduped via localStorage). This is the conversion
+          // anchor for Google Ads attribution: /free-trial click →
+          // signup_start → email confirm → /scout → trial_activated.
+          if (typeof window !== "undefined" && !localStorage.getItem("trial_activated_fired")) {
+            trackTrialActivated({ method: "email" });
+            localStorage.setItem("trial_activated_fired", "1");
+          }
         }
       } catch { /* non-blocking */ }
     })();
